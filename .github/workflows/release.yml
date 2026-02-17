@@ -39,7 +39,7 @@ jobs:
         run: |
           bun test --coverage | tee coverage.txt
           LINE=$(grep "All files" coverage.txt)
-          LINES_PERCENT=$(echo "$LINE" | awk -F'|' '{gsub(/ /, "", $4); print $4}')
+          LINES_PERCENT=$(echo "$LINE" | awk -F'|' '{gsub(/ /, "", $3); print $3}')
           export LINES_PERCENT
           python3 - <<'PY'
           import os
