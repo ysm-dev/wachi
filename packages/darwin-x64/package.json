@@ -1,5 +1,5 @@
 {
-  "name": "@wachi/darwin-x64",
+  "name": "@wachi-cli/darwin-x64",
   "version": "0.1.0",
   "private": false,
   "os": [

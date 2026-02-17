@@ -31,32 +31,32 @@
         "knip": "5.83.1",
       },
       "optionalDependencies": {
-        "@wachi/darwin-arm64": "0.0.0",
-        "@wachi/darwin-x64": "0.0.0",
-        "@wachi/linux-arm64": "0.0.0",
-        "@wachi/linux-x64": "0.0.0",
-        "@wachi/win32-x64": "0.0.0",
+        "@wachi-cli/darwin-arm64": "0.1.0",
+        "@wachi-cli/darwin-x64": "0.1.0",
+        "@wachi-cli/linux-arm64": "0.1.0",
+        "@wachi-cli/linux-x64": "0.1.0",
+        "@wachi-cli/win32-x64": "0.1.0",
       },
     },
     "packages/darwin-arm64": {
-      "name": "@wachi/darwin-arm64",
-      "version": "0.0.0",
+      "name": "@wachi-cli/darwin-arm64",
+      "version": "0.1.0",
     },
     "packages/darwin-x64": {
-      "name": "@wachi/darwin-x64",
-      "version": "0.0.0",
+      "name": "@wachi-cli/darwin-x64",
+      "version": "0.1.0",
     },
     "packages/linux-arm64": {
-      "name": "@wachi/linux-arm64",
-      "version": "0.0.0",
+      "name": "@wachi-cli/linux-arm64",
+      "version": "0.1.0",
     },
     "packages/linux-x64": {
-      "name": "@wachi/linux-x64",
-      "version": "0.0.0",
+      "name": "@wachi-cli/linux-x64",
+      "version": "0.1.0",
     },
     "packages/win32-x64": {
-      "name": "@wachi/win32-x64",
-      "version": "0.0.0",
+      "name": "@wachi-cli/win32-x64",
+      "version": "0.1.0",
     },
   },
   "packages": {
@@ -230,15 +230,15 @@
 
     "@vercel/oidc": ["@vercel/oidc@3.1.0", "", {}, "sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w=="],
 
-    "@wachi/darwin-arm64": ["@wachi/darwin-arm64@workspace:packages/darwin-arm64"],
+    "@wachi-cli/darwin-arm64": ["@wachi-cli/darwin-arm64@workspace:packages/darwin-arm64"],
 
-    "@wachi/darwin-x64": ["@wachi/darwin-x64@workspace:packages/darwin-x64"],
+    "@wachi-cli/darwin-x64": ["@wachi-cli/darwin-x64@workspace:packages/darwin-x64"],
 
-    "@wachi/linux-arm64": ["@wachi/linux-arm64@workspace:packages/linux-arm64"],
+    "@wachi-cli/linux-arm64": ["@wachi-cli/linux-arm64@workspace:packages/linux-arm64"],
 
-    "@wachi/linux-x64": ["@wachi/linux-x64@workspace:packages/linux-x64"],
+    "@wachi-cli/linux-x64": ["@wachi-cli/linux-x64@workspace:packages/linux-x64"],
 
-    "@wachi/win32-x64": ["@wachi/win32-x64@workspace:packages/win32-x64"],
+    "@wachi-cli/win32-x64": ["@wachi-cli/win32-x64@workspace:packages/win32-x64"],
 
     "ai": ["ai@6.0.86", "", { "dependencies": { "@ai-sdk/gateway": "3.0.46", "@ai-sdk/provider": "3.0.8", "@ai-sdk/provider-utils": "4.0.15", "@opentelemetry/api": "1.9.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-U2W2LBCHA/pr0Ui7vmmsjBiLEzBbZF3yVHNy7Rbzn7IX+SvoQPFM5rN74hhfVzZoE8zBuGD4nLLk+j0elGacvQ=="],
 
