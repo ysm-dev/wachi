@@ -1,0 +1,5 @@
+@echo off
+REM WACHI_DEV_PLACEHOLDER
+echo This development workspace does not include compiled platform binaries.
+echo Install from npm release artifacts to use @wachi/win32-x64.
+exit /b 1
