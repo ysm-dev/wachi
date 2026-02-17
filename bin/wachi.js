@@ -6,11 +6,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const PLATFORM_PACKAGE_MAP = {
-  "darwin-arm64": "@wachi/darwin-arm64",
-  "darwin-x64": "@wachi/darwin-x64",
-  "linux-arm64": "@wachi/linux-arm64",
-  "linux-x64": "@wachi/linux-x64",
-  "win32-x64": "@wachi/win32-x64",
+  "darwin-arm64": "@wachi-cli/darwin-arm64",
+  "darwin-x64": "@wachi-cli/darwin-x64",
+  "linux-arm64": "@wachi-cli/linux-arm64",
+  "linux-x64": "@wachi-cli/linux-x64",
+  "win32-x64": "@wachi-cli/win32-x64",
 };
 
 const key = `${process.platform}-${process.arch}`;
@@ -66,6 +66,6 @@ if (typeof fallback.status === "number") {
 }
 
 process.stderr.write(
-  "Error: Unable to run wachi. Install Bun for local dev fallback or install matching @wachi/* binary package.\n",
+  "Error: Unable to run wachi. Install Bun for local dev fallback or install matching @wachi-cli/* binary package.\n",
 );
 process.exit(1);
