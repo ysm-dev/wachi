@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Feed</title>
+    <item>
+      <title>Newer Post</title>
+      <link>https://example.com/newer</link>
+      <guid>https://example.com/newer</guid>
+      <pubDate>Tue, 10 Jan 2023 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Older Post</title>
+      <link>https://example.com/older</link>
+      <guid>https://example.com/older</guid>
+      <pubDate>Mon, 09 Jan 2023 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

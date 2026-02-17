@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Fallback Feed</title>
+    <item>
+      <guid>https://example.com/guid-only</guid>
+      <description>This item has no title field but has a description that should be used as fallback.</description>
+      <pubDate>Wed, 11 Jan 2023 10:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <title>Title Without Link</title>
+      <description>Missing link should fall back to guid or subscription URL.</description>
+      <guid>https://example.com/title-without-link</guid>
+      <pubDate>Thu, 12 Jan 2023 10:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

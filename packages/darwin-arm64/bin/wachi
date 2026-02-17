@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+# WACHI_DEV_PLACEHOLDER
+echo "This development workspace does not include compiled platform binaries."
+echo "Install from npm release artifacts to use @wachi/darwin-arm64."
+exit 1

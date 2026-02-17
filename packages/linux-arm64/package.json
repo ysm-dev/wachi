@@ -1,0 +1,14 @@
+{
+  "name": "@wachi/linux-arm64",
+  "version": "0.1.0",
+  "private": false,
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/wachi"
+  ]
+}

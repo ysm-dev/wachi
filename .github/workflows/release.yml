@@ -1,0 +1,173 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify generated DB migration manifest
+        run: |
+          bun run db:sync-migrations
+          git diff --exit-code -- src/lib/db/generated-migrations.ts
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Coverage gate
+        run: |
+          bun test --coverage | tee coverage.txt
+          LINE=$(grep "All files" coverage.txt)
+          LINES_PERCENT=$(echo "$LINE" | awk -F'|' '{gsub(/ /, "", $4); print $4}')
+          export LINES_PERCENT
+          python3 - <<'PY'
+          import os
+          value = float(os.environ["LINES_PERCENT"])
+          if value < 95:
+              raise SystemExit(f"Coverage below target: {value}%")
+          print(f"Coverage OK: {value}%")
+          PY
+
+      - name: Dead code check
+        run: bun run knip
+
+  build-binaries:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            output: wachi-darwin-arm64
+            package: darwin-arm64
+            bin: wachi
+          - target: bun-darwin-x64
+            output: wachi-darwin-x64
+            package: darwin-x64
+            bin: wachi
+          - target: bun-linux-arm64
+            output: wachi-linux-arm64
+            package: linux-arm64
+            bin: wachi
+          - target: bun-linux-x64
+            output: wachi-linux-x64
+            package: linux-x64
+            bin: wachi
+          - target: bun-windows-x64
+            output: wachi-win32-x64.exe
+            package: win32-x64
+            bin: wachi.exe
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Bake version constant
+        run: bun run version:bake
+
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          bun build src/index.ts --compile --target ${{ matrix.target }} --outfile dist/${{ matrix.output }}
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output }}
+          path: dist/${{ matrix.output }}
+
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node for npm publish
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Download built binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Place binaries into platform packages
+        run: |
+          cp dist/wachi-darwin-arm64/wachi-darwin-arm64 packages/darwin-arm64/bin/wachi
+          cp dist/wachi-darwin-x64/wachi-darwin-x64 packages/darwin-x64/bin/wachi
+          cp dist/wachi-linux-arm64/wachi-linux-arm64 packages/linux-arm64/bin/wachi
+          cp dist/wachi-linux-x64/wachi-linux-x64 packages/linux-x64/bin/wachi
+          cp dist/wachi-win32-x64.exe/wachi-win32-x64.exe packages/win32-x64/bin/wachi.exe
+          chmod +x packages/darwin-arm64/bin/wachi
+          chmod +x packages/darwin-x64/bin/wachi
+          chmod +x packages/linux-arm64/bin/wachi
+          chmod +x packages/linux-x64/bin/wachi
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --access public ./packages/darwin-arm64
+          npm publish --access public ./packages/darwin-x64
+          npm publish --access public ./packages/linux-arm64
+          npm publish --access public ./packages/linux-x64
+          npm publish --access public ./packages/win32-x64
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release create "v$VERSION" \
+            dist/wachi-darwin-arm64/wachi-darwin-arm64 \
+            dist/wachi-darwin-x64/wachi-darwin-x64 \
+            dist/wachi-linux-arm64/wachi-linux-arm64 \
+            dist/wachi-linux-x64/wachi-linux-x64 \
+            dist/wachi-win32-x64.exe/wachi-win32-x64.exe \
+            --title "v$VERSION" \
+            --notes "Automated release for v$VERSION"
