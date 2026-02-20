@@ -7,6 +7,7 @@ import {
   getDefaultConfigPath,
   getDefaultDbPath,
   getDefaultJsonConfigPath,
+  getLegacyNodejsDbPath,
   getPendingUpdatePath,
 } from "../../../src/utils/paths.ts";
 
@@ -43,6 +44,12 @@ describe("paths", () => {
     expect(getPendingUpdatePath().endsWith("wachi-new")).toBe(true);
 
     await rm(home, { recursive: true, force: true });
+  });
+
+  it("derives legacy nodejs db path", () => {
+    const legacyDbPath = getLegacyNodejsDbPath();
+    expect(legacyDbPath.endsWith("wachi.db")).toBe(true);
+    expect(legacyDbPath.toLowerCase().includes("wachi-nodejs")).toBe(true);
   });
 
   it("creates parent directory", async () => {
