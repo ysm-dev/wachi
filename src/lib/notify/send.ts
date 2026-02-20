@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { WachiError } from "../../utils/error.ts";
 import { ensureUvx } from "./install-uv.ts";
+import { personalizeAppriseUrl, sourceIdentitySchema } from "./source-identity.ts";
 
 const sendNotificationOptionsSchema = z.object({
   appriseUrl: z.string(),
   body: z.string(),
   timeoutMs: z.number().optional(),
+  sourceIdentity: sourceIdentitySchema.optional(),
 });
 
 type SendNotificationOptions = z.infer<typeof sendNotificationOptionsSchema>;
@@ -14,10 +16,13 @@ export const sendNotification = async ({
   appriseUrl,
   body,
   timeoutMs = 30_000,
+  sourceIdentity,
 }: SendNotificationOptions): Promise<void> => {
   await ensureUvx();
 
-  const proc = Bun.spawn(["uvx", "apprise", "-b", body, appriseUrl], {
+  const effectiveAppriseUrl = personalizeAppriseUrl(appriseUrl, sourceIdentity);
+
+  const proc = Bun.spawn(["uvx", "apprise", "-b", body, effectiveAppriseUrl], {
     stdout: "pipe",
     stderr: "pipe",
   });

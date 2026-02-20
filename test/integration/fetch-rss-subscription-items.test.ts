@@ -40,12 +40,34 @@ const feedXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
+const feedWithoutTitleXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <item>
+      <title>One</title>
+      <link>/one</link>
+      <guid>/one</guid>
+    </item>
+  </channel>
+</rss>`;
+
 describe("fetchRssSubscriptionItems integration", () => {
   it("stores ETag and returns notModified on conditional 304", async () => {
     const etag = '"abc-123"';
     const server = Bun.serve({
       port: 0,
       fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          return new Response(
+            "<html><head><title>Example Site</title><link rel='icon' href='/icons/site.png'></head></html>",
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        if (url.pathname !== "/feed.xml") {
+          return new Response("not found", { status: 404 });
+        }
+
         const ifNoneMatch = request.headers.get("if-none-match");
         if (ifNoneMatch === etag) {
           return new Response(null, { status: 304, headers: { etag } });
@@ -68,8 +90,9 @@ describe("fetchRssSubscriptionItems integration", () => {
     }
 
     const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
     const first = await fetchRssSubscriptionItems({
-      subscriptionUrl: "https://example.com",
+      subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
@@ -77,11 +100,13 @@ describe("fetchRssSubscriptionItems integration", () => {
 
     expect(first.notModified).toBe(false);
     expect(first.items).toHaveLength(1);
-    expect(first.items[0]?.link).toBe("https://example.com/one");
+    expect(first.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/one`);
+    expect(first.sourceIdentity?.username).toBe("Feed");
+    expect(first.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
     expect(getMetaValue(db, `etag:${rssUrl}`)).toBe(etag);
 
     const second = await fetchRssSubscriptionItems({
-      subscriptionUrl: "https://example.com",
+      subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
@@ -96,6 +121,17 @@ describe("fetchRssSubscriptionItems integration", () => {
     const server = Bun.serve({
       port: 0,
       fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          return new Response(
+            "<html><head><title>Example Site</title><link rel='icon' href='/icons/site.png'></head></html>",
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        if (url.pathname !== "/feed.xml") {
+          return new Response("not found", { status: 404 });
+        }
+
         const ifModifiedSince = request.headers.get("if-modified-since");
         if (ifModifiedSince === lastModified) {
           return new Response(null, { status: 304, headers: { "last-modified": lastModified } });
@@ -118,8 +154,9 @@ describe("fetchRssSubscriptionItems integration", () => {
     }
 
     const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
     await fetchRssSubscriptionItems({
-      subscriptionUrl: "https://example.com",
+      subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
@@ -128,7 +165,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(getMetaValue(db, `last-modified:${rssUrl}`)).toBe(lastModified);
 
     const second = await fetchRssSubscriptionItems({
-      subscriptionUrl: "https://example.com",
+      subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
@@ -160,5 +197,45 @@ describe("fetchRssSubscriptionItems integration", () => {
         useConditionalRequest: true,
       }),
     ).rejects.toBeInstanceOf(WachiError);
+  });
+
+  it("falls back to website title and favicon when RSS metadata is missing", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          return new Response(
+            "<html><head><title>Website Title</title><link rel='icon' href='/icons/site.png'></head></html>",
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        if (url.pathname === "/feed.xml") {
+          return new Response(feedWithoutTitleXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+    });
+
+    expect(result.notModified).toBe(false);
+    expect(result.sourceIdentity?.username).toBe("Website Title");
+    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
   });
 });

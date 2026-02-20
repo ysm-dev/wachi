@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseRssItems } from "../../../../src/lib/rss/parse.ts";
+import { parseRssFeed, parseRssItems } from "../../../../src/lib/rss/parse.ts";
 
 const fixturePath = (...parts: string[]): string => {
   return join(process.cwd(), "test", "fixtures", ...parts);
@@ -83,5 +83,29 @@ describe("parseRssItems", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]?.publishedAt).toBeNull();
+  });
+
+  it("extracts feed title and image metadata", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Daily Example</title>
+    <image>
+      <url>https://example.com/logo-512.png</url>
+      <title>Daily Example</title>
+      <link>https://example.com</link>
+    </image>
+    <item>
+      <title>Item</title>
+      <link>https://example.com/item</link>
+    </item>
+  </channel>
+</rss>`;
+
+    const parsed = await parseRssFeed(xml, "https://example.com/feed.xml");
+
+    expect(parsed.title).toBe("Daily Example");
+    expect(parsed.imageUrl).toBe("https://example.com/logo-512.png");
+    expect(parsed.items).toHaveLength(1);
   });
 });

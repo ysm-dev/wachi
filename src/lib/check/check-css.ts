@@ -35,8 +35,8 @@ export const checkCssSubscription = async ({
   stats,
   enqueueForChannel,
 }: CheckCssOptions): Promise<void> => {
-  const items = await fetchCssSubscriptionItems(subscription);
-  if (items.length === 0) {
+  const fetched = await fetchCssSubscriptionItems(subscription);
+  if (fetched.items.length === 0) {
     throw new WachiError(
       `No items matched selector for ${subscription.url}`,
       "The saved CSS selectors returned 0 items.",
@@ -45,7 +45,7 @@ export const checkCssSubscription = async ({
   }
 
   await handleSubscriptionItems({
-    items,
+    items: fetched.items,
     channelUrl,
     effectiveChannelUrl,
     subscriptionUrl: subscription.url,
@@ -56,6 +56,7 @@ export const checkCssSubscription = async ({
     config,
     stats,
     enqueueForChannel,
+    sourceIdentity: fetched.sourceIdentity,
   });
 
   markHealthSuccess(db, channelUrl, subscription.url);

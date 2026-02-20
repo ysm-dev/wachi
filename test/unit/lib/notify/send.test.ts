@@ -104,4 +104,105 @@ describe("sendNotification", () => {
 
     expect(killed).toBe(true);
   });
+
+  it("injects source identity into supported apprise URLs", async () => {
+    let call = 0;
+    let sentAppriseUrl = "";
+    Bun.spawn = ((command: string[]) => {
+      call += 1;
+      if (call === 1) {
+        return {
+          exited: Promise.resolve(0),
+          kill: () => {},
+        } as MockProc;
+      }
+
+      sentAppriseUrl = command[4] ?? "";
+      return {
+        exited: Promise.resolve(0),
+        stdout: makeStream(""),
+        stderr: makeStream(""),
+        kill: () => {},
+      } as MockProc;
+    }) as unknown as typeof Bun.spawn;
+
+    await sendNotification({
+      appriseUrl: "discord://12345/token",
+      body: "hello",
+      sourceIdentity: {
+        username: "Example Feed",
+        avatarUrl: "https://example.com/icon.png",
+      },
+    });
+
+    expect(sentAppriseUrl).toBe(
+      "discord://Example%20Feed@12345/token?avatar_url=https%3A%2F%2Fexample.com%2Ficon.png",
+    );
+  });
+
+  it("only sets username on schemes without avatar_url support", async () => {
+    let call = 0;
+    let sentAppriseUrl = "";
+    Bun.spawn = ((command: string[]) => {
+      call += 1;
+      if (call === 1) {
+        return {
+          exited: Promise.resolve(0),
+          kill: () => {},
+        } as MockProc;
+      }
+
+      sentAppriseUrl = command[4] ?? "";
+      return {
+        exited: Promise.resolve(0),
+        stdout: makeStream(""),
+        stderr: makeStream(""),
+        kill: () => {},
+      } as MockProc;
+    }) as unknown as typeof Bun.spawn;
+
+    await sendNotification({
+      appriseUrl: "slack://token/channel",
+      body: "hello",
+      sourceIdentity: {
+        username: "Example Feed",
+        avatarUrl: "https://example.com/icon.png",
+      },
+    });
+
+    expect(sentAppriseUrl).toBe("slack://Example%20Feed@token/channel");
+  });
+
+  it("leaves unsupported schemes unchanged", async () => {
+    let call = 0;
+    let sentAppriseUrl = "";
+    Bun.spawn = ((command: string[]) => {
+      call += 1;
+      if (call === 1) {
+        return {
+          exited: Promise.resolve(0),
+          kill: () => {},
+        } as MockProc;
+      }
+
+      sentAppriseUrl = command[4] ?? "";
+      return {
+        exited: Promise.resolve(0),
+        stdout: makeStream(""),
+        stderr: makeStream(""),
+        kill: () => {},
+      } as MockProc;
+    }) as unknown as typeof Bun.spawn;
+
+    await sendNotification({
+      appriseUrl: "gotify://token@notify.example.com/topic",
+      body: "hello",
+      sourceIdentity: {
+        username: "Example Feed",
+        avatarUrl: "https://example.com/icon.png",
+      },
+    });
+
+    expect(sentAppriseUrl).toBe("gotify://token@notify.example.com/topic");
+  });
 });

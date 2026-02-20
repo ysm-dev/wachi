@@ -10,7 +10,8 @@ export const prepareCssSubscription = async (
 ): Promise<PreparedSubscription> => {
   const identified = await identifyCssSelectors(url, config);
   const subscription = createCssSubscription(url, identified.selectors);
-  const baselineItems = (await fetchCssSubscriptionItems(subscription)).map((item) => ({
+  const fetched = await fetchCssSubscriptionItems(subscription);
+  const baselineItems = fetched.items.map((item) => ({
     title: item.title,
     link: item.link,
   }));

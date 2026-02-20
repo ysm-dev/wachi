@@ -28,15 +28,17 @@ describe("fetchCssSubscriptionItems integration", () => {
     });
     servers.push(server);
 
-    const items = await fetchCssSubscriptionItems({
+    const result = await fetchCssSubscriptionItems({
       url: `http://127.0.0.1:${server.port}/news`,
       item_selector: ".entry",
       title_selector: ".headline",
       link_selector: ".headline",
     });
 
-    expect(items).toHaveLength(3);
-    expect(items[0]?.title).toBe("First Headline");
+    expect(result.items).toHaveLength(3);
+    expect(result.items[0]?.title).toBe("First Headline");
+    expect(result.sourceIdentity.username).toBe("News");
+    expect(result.sourceIdentity.avatarUrl).toBe(`http://127.0.0.1:${server.port}/favicon.ico`);
   });
 
   it("throws WachiError on non-2xx response", async () => {

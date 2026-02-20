@@ -58,6 +58,7 @@ export const checkRssSubscription = async ({
     config,
     stats,
     enqueueForChannel,
+    sourceIdentity: fetched.sourceIdentity,
   });
 
   markHealthSuccess(db, channelUrl, subscription.url);

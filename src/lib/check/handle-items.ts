@@ -8,6 +8,7 @@ import { hasDedupHash } from "../db/has-dedup-hash.ts";
 import { insertDedupRecord } from "../db/insert-dedup-record.ts";
 import { formatNotificationBody } from "../notify/format.ts";
 import { sendNotification } from "../notify/send.ts";
+import type { SourceIdentity } from "../notify/source-identity.ts";
 import { buildItemSummary } from "../subscriptions/summary.ts";
 
 const sentRecordSchema = z.object({
@@ -48,6 +49,7 @@ const handleItemsOptionsSchema = z.object({
   config: z.custom<ResolvedConfig>(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: enqueueForChannelSchema,
+  sourceIdentity: z.custom<SourceIdentity>().optional(),
 });
 
 type HandleItemsOptions = z.infer<typeof handleItemsOptionsSchema>;
@@ -72,6 +74,7 @@ export const handleSubscriptionItems = async ({
   config,
   stats,
   enqueueForChannel,
+  sourceIdentity,
 }: HandleItemsOptions): Promise<void> => {
   for (const item of items) {
     const dedupHash = buildDedupHash(channelUrl, item.title, item.link);
@@ -108,7 +111,11 @@ export const handleSubscriptionItems = async ({
 
     try {
       await enqueueForChannel(effectiveChannelUrl, async () => {
-        await sendNotification({ appriseUrl: effectiveChannelUrl, body });
+        await sendNotification({
+          appriseUrl: effectiveChannelUrl,
+          body,
+          sourceIdentity,
+        });
       });
       pushSent(stats, item, channelUrl);
       if (!isJson) {
