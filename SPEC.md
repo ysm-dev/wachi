@@ -331,7 +331,7 @@ Config file is created with `0600` permissions (owner read/write only) to protec
 
 **First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new channel and subscription. No commented-out template sections (no `llm`, `summary`, `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
 
-**Config writes use atomic write:** Write to `config.yml.tmp`, then `rename()` to `config.yml`. No lockfile needed. If two concurrent writes race, last one wins (acceptable for CLI).
+**Config writes use atomic write:** Write to `<config path>.tmp`, then `rename()` to the target config path. No lockfile needed. If two concurrent writes race, last one wins (acceptable for CLI).
 
 **YAML comment preservation:** Uses `yaml` package's `parseDocument()` + `toString()` for round-trip parsing that preserves user comments, blank lines, and formatting.
 
@@ -376,7 +376,7 @@ channels:
         rss_url: "https://www.youtube.com/feeds/videos.xml?channel_id=..."
 ```
 
-Both YAML and JSON config files are supported. wachi looks for `config.yml` first, then `config.json`.
+YAML, JSONC, and JSON config files are supported. wachi looks for `config.yml` first, then `config.jsonc`, then `config.json`.
 
 Config is validated with zod on every read. Errors use `zod-validation-error` for human-readable messages with exact field paths.
 

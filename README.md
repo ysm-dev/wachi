@@ -142,7 +142,9 @@ wachi test "slack://xoxb-token/channel"
 
 ## Configuration
 
-Config lives at `~/.config/wachi/config.yml` (XDG-compliant). Auto-created on first `wachi sub`.
+Config lives at `~/.config/wachi/config.yml` (XDG-compliant, default). Auto-created on first `wachi sub`.
+
+`wachi` reads config in this order: `config.yml` -> `config.jsonc` -> `config.json`.
 
 ```yaml
 # LLM config (only needed for non-RSS sites)

@@ -8,13 +8,13 @@ import { type UserConfig, userConfigSchema } from "./schema.ts";
 const writeConfigOptionsSchema = z.object({
   config: z.custom<UserConfig>(),
   path: z.string(),
-  format: z.union([z.literal("yaml"), z.literal("json")]),
+  format: z.union([z.literal("yaml"), z.literal("json"), z.literal("jsonc")]),
 });
 
 type WriteConfigOptions = z.infer<typeof writeConfigOptionsSchema>;
 
-const toConfigText = (config: UserConfig, format: "yaml" | "json"): string => {
-  if (format === "json") {
+const toConfigText = (config: UserConfig, format: "yaml" | "json" | "jsonc"): string => {
+  if (format === "json" || format === "jsonc") {
     return `${JSON.stringify(config, null, 2)}\n`;
   }
 
