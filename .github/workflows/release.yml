@@ -145,6 +145,36 @@ jobs:
           chmod +x packages/linux-arm64/bin/wachi
           chmod +x packages/linux-x64/bin/wachi
 
+      - name: Verify root npm package is wrapper-only
+        run: |
+          npm pack --dry-run --json > pack-dry-run.json
+          python3 - <<'PY'
+          import json
+
+          MAX_UNPACKED_BYTES = 1 * 1024 * 1024
+          with open("pack-dry-run.json", "r", encoding="utf-8") as f:
+              pack = json.load(f)[0]
+
+          unpacked_size = pack["unpackedSize"]
+          if unpacked_size > MAX_UNPACKED_BYTES:
+              raise SystemExit(
+                  f"Root package too large: {unpacked_size} bytes (max {MAX_UNPACKED_BYTES})"
+              )
+
+          file_paths = [entry["path"] for entry in pack["files"]]
+          disallowed_prefixes = ("packages/", "src/", "test/", ".github/")
+          disallowed = [path for path in file_paths if path.startswith(disallowed_prefixes)]
+          if disallowed:
+              raise SystemExit(
+                  "Root package contains non-wrapper files:\n" + "\n".join(disallowed)
+              )
+
+          if "bin/wachi.js" not in file_paths:
+              raise SystemExit("Root package is missing bin/wachi.js")
+
+          print(f"Root package OK: {unpacked_size} bytes, {len(file_paths)} files")
+          PY
+
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
