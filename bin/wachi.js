@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,9 +16,10 @@ const PLATFORM_PACKAGE_MAP = {
 const key = `${process.platform}-${process.arch}`;
 const packageName = PLATFORM_PACKAGE_MAP[key];
 const require = createRequire(import.meta.url);
+const args = process.argv.slice(2);
 
 const runBinary = (binaryPath) => {
-  const result = spawnSync(binaryPath, process.argv.slice(2), {
+  const result = spawnSync(binaryPath, args, {
     stdio: "inherit",
   });
   if (typeof result.status === "number") {
@@ -29,14 +30,31 @@ const runBinary = (binaryPath) => {
 
 const isPlaceholderBinary = (binaryPath) => {
   try {
-    const content = readFileSync(binaryPath, "utf8");
-    return content.includes("WACHI_DEV_PLACEHOLDER");
+    if (statSync(binaryPath).size > 4096) {
+      return false;
+    }
+
+    const fd = openSync(binaryPath, "r");
+    try {
+      const buffer = Buffer.alloc(512);
+      const readSize = readSync(fd, buffer, 0, buffer.length, 0);
+      return buffer
+        .subarray(0, readSize)
+        .toString("utf8")
+        .includes("WACHI_DEV_PLACEHOLDER");
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return false;
   }
 };
 
-if (packageName) {
+const resolvePlatformBinary = () => {
+  if (!packageName) {
+    return null;
+  }
+
   const binaryNames = process.platform === "win32" ? ["wachi.exe", "wachi"] : ["wachi"];
   for (const binaryName of binaryNames) {
     try {
@@ -44,28 +62,51 @@ if (packageName) {
       if (isPlaceholderBinary(binaryPath)) {
         continue;
       }
-      runBinary(binaryPath);
+      return binaryPath;
     } catch {
       continue;
     }
   }
-}
+
+  return null;
+};
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, "..");
-const fallback = spawnSync(
-  process.env.BUN_BINARY || "bun",
-  ["run", join(projectRoot, "src/index.ts"), ...process.argv.slice(2)],
-  {
-    stdio: "inherit",
-  },
-);
+const sourceEntry = join(projectRoot, "src/index.ts");
+const binaryPath = resolvePlatformBinary();
 
-if (typeof fallback.status === "number") {
-  process.exit(fallback.status);
+if (binaryPath) {
+  runBinary(binaryPath);
+}
+
+if (existsSync(sourceEntry)) {
+  const fallback = spawnSync(process.env.BUN_BINARY || "bun", ["run", sourceEntry, ...args], {
+    stdio: "inherit",
+  });
+
+  if (typeof fallback.status === "number") {
+    process.exit(fallback.status);
+  }
+
+  process.stderr.write(
+    "Error: Unable to run local development fallback. Install Bun or set BUN_BINARY.\n",
+  );
+  process.exit(1);
+}
+
+if (!packageName) {
+  process.stderr.write(
+    `Error: Unsupported platform for prebuilt binaries (${key}).\n` +
+      "The published wachi package is binary-only.\n",
+  );
+  process.exit(1);
 }
 
 process.stderr.write(
-  "Error: Unable to run wachi. Install Bun for local dev fallback or install matching @wachi-cli/* binary package.\n",
+  `Error: Unable to run wachi binary for ${key}.\n` +
+    `Expected optional dependency: ${packageName}.\n` +
+    "The published wachi package is binary-only.\n" +
+    "Reinstall with optional dependencies enabled (avoid --no-optional or --omit=optional).\n",
 );
 process.exit(1);

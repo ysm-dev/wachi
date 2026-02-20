@@ -4,15 +4,21 @@
   "workspaces": {
     "": {
       "name": "wachi",
-      "dependencies": {
+      "devDependencies": {
         "@ai-sdk/openai": "3.0.30",
+        "@biomejs/biome": "2.4.2",
+        "@types/bun": "1.3.9",
+        "@types/turndown": "5.0.6",
+        "@typescript/native-preview": "7.0.0-dev.20260218.1",
         "ai": "6.0.91",
         "cheerio": "1.2.0",
         "citty": "0.2.1",
         "css-selector-generator": "3.8.0",
+        "drizzle-kit": "0.31.9",
         "drizzle-orm": "0.45.1",
         "drizzle-zod": "0.8.3",
         "env-paths": "4.0.0",
+        "knip": "5.84.1",
         "ofetch": "1.5.1",
         "p-limit": "7.3.0",
         "reading-time": "1.5.0",
@@ -21,14 +27,6 @@
         "yaml": "2.8.2",
         "zod": "4.3.6",
         "zod-validation-error": "5.0.0",
-      },
-      "devDependencies": {
-        "@biomejs/biome": "2.4.2",
-        "@types/bun": "1.3.9",
-        "@types/turndown": "5.0.6",
-        "@typescript/native-preview": "7.0.0-dev.20260218.1",
-        "drizzle-kit": "0.31.9",
-        "knip": "5.84.1",
       },
       "optionalDependencies": {
         "@wachi-cli/darwin-arm64": "0.1.0",
