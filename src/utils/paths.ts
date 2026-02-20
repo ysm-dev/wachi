@@ -21,6 +21,11 @@ export const getDefaultJsonConfigPath = (): string => {
   return join(paths.config, "config.json");
 };
 
+export const getDefaultJsoncConfigPath = (): string => {
+  const paths = getWachiPaths();
+  return join(paths.config, "config.jsonc");
+};
+
 export const getDefaultDbPath = (): string => {
   const env = getEnv();
   if (env.dbPath) {

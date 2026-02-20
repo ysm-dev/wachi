@@ -1,19 +1,24 @@
 import { access, readFile } from "node:fs/promises";
 import { extname } from "node:path";
+import { type ParseError, parse as parseJson, printParseErrorCode } from "jsonc-parser";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { fromError } from "zod-validation-error";
 import { WachiError } from "../../utils/error.ts";
-import { getDefaultConfigPath, getDefaultJsonConfigPath } from "../../utils/paths.ts";
+import {
+  getDefaultConfigPath,
+  getDefaultJsonConfigPath,
+  getDefaultJsoncConfigPath,
+} from "../../utils/paths.ts";
 import { applyConfigDefaults, type UserConfig, userConfigSchema } from "./schema.ts";
 
-type ConfigFormat = "yaml" | "json";
+type ConfigFormat = "yaml" | "json" | "jsonc";
 
 const readConfigResultSchema = z.object({
   config: z.custom<ReturnType<typeof applyConfigDefaults>>(),
   rawConfig: z.custom<UserConfig>(),
   path: z.string(),
-  format: z.union([z.literal("yaml"), z.literal("json")]),
+  format: z.union([z.literal("yaml"), z.literal("json"), z.literal("jsonc")]),
   exists: z.boolean(),
 });
 
@@ -29,15 +34,77 @@ const pathExists = async (path: string): Promise<boolean> => {
 };
 
 const detectFormat = (filePath: string): ConfigFormat => {
-  return extname(filePath).toLowerCase() === ".json" ? "json" : "yaml";
+  const extension = extname(filePath).toLowerCase();
+  if (extension === ".json") {
+    return "json";
+  }
+  if (extension === ".jsonc") {
+    return "jsonc";
+  }
+  return "yaml";
+};
+
+const getLineAndColumn = (content: string, offset: number) => {
+  const head = content.slice(0, Math.max(0, offset));
+  const lines = head.split(/\r\n|\r|\n/u);
+  const line = lines.length;
+  const column = (lines[lines.length - 1] ?? "").length + 1;
+  return { line, column };
+};
+
+const formatJsonParseError = (content: string, error: ParseError, format: "json" | "jsonc") => {
+  const location = getLineAndColumn(content, error.offset);
+  const reason = printParseErrorCode(error.error);
+  return `${format.toUpperCase()} parse error (${reason}) at line ${location.line}, column ${location.column}.`;
+};
+
+const parseJsonContent = (content: string): unknown => {
+  if (!content.trim()) {
+    return {};
+  }
+
+  const errors: ParseError[] = [];
+  const parsed = parseJson(content, errors, {
+    allowEmptyContent: true,
+    allowTrailingComma: false,
+    disallowComments: true,
+  });
+
+  const firstError = errors[0];
+  if (firstError) {
+    throw new Error(formatJsonParseError(content, firstError, "json"));
+  }
+
+  return parsed ?? {};
+};
+
+const parseJsoncContent = (content: string): unknown => {
+  if (!content.trim()) {
+    return {};
+  }
+
+  const errors: ParseError[] = [];
+  const parsed = parseJson(content, errors, {
+    allowEmptyContent: true,
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+
+  const firstError = errors[0];
+  if (firstError) {
+    throw new Error(formatJsonParseError(content, firstError, "jsonc"));
+  }
+
+  return parsed ?? {};
 };
 
 const parseConfigContent = (content: string, format: ConfigFormat): unknown => {
   if (format === "json") {
-    if (!content.trim()) {
-      return {};
-    }
-    return JSON.parse(content);
+    return parseJsonContent(content);
+  }
+
+  if (format === "jsonc") {
+    return parseJsoncContent(content);
   }
 
   if (!content.trim()) {
@@ -50,17 +117,21 @@ const parseConfigContent = (content: string, format: ConfigFormat): unknown => {
 };
 
 export const readConfig = async (configPathOverride?: string): Promise<ReadConfigResult> => {
-  const yamlPath = configPathOverride ?? getDefaultConfigPath();
+  const requestedPath = configPathOverride ?? getDefaultConfigPath();
+  const yamlPath = getDefaultConfigPath();
+  const jsoncPath = getDefaultJsoncConfigPath();
   const jsonPath = getDefaultJsonConfigPath();
 
   const explicitPathProvided = Boolean(configPathOverride);
   const resolvedPath = explicitPathProvided
-    ? yamlPath
+    ? requestedPath
     : (await pathExists(yamlPath))
       ? yamlPath
-      : (await pathExists(jsonPath))
-        ? jsonPath
-        : yamlPath;
+      : (await pathExists(jsoncPath))
+        ? jsoncPath
+        : (await pathExists(jsonPath))
+          ? jsonPath
+          : yamlPath;
 
   const format = detectFormat(resolvedPath);
   const exists = await pathExists(resolvedPath);

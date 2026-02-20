@@ -7,6 +7,7 @@ import {
   getDefaultConfigPath,
   getDefaultDbPath,
   getDefaultJsonConfigPath,
+  getDefaultJsoncConfigPath,
   getLegacyNodejsDbPath,
   getPendingUpdatePath,
 } from "../../../src/utils/paths.ts";
@@ -39,6 +40,7 @@ describe("paths", () => {
     delete process.env.WACHI_DB_PATH;
 
     expect(getDefaultConfigPath().endsWith("config.yml")).toBe(true);
+    expect(getDefaultJsoncConfigPath().endsWith("config.jsonc")).toBe(true);
     expect(getDefaultJsonConfigPath().endsWith("config.json")).toBe(true);
     expect(getDefaultDbPath().endsWith("wachi.db")).toBe(true);
     expect(getPendingUpdatePath().endsWith("wachi-new")).toBe(true);
