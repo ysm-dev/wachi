@@ -1,6 +1,6 @@
 {
   "name": "@wachi-cli/win32-x64",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "os": [
     "win32"
