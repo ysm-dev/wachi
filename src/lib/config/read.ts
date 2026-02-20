@@ -1,5 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { extname } from "node:path";
+import { type ParseError, parse as parseJson, printParseErrorCode } from "jsonc-parser";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { fromError } from "zod-validation-error";
@@ -43,116 +44,38 @@ const detectFormat = (filePath: string): ConfigFormat => {
   return "yaml";
 };
 
-const stripJsonComments = (content: string): string => {
-  let result = "";
-  let inString = false;
-  let escaped = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index] ?? "";
-    const next = content[index + 1] ?? "";
-
-    if (inLineComment) {
-      if (char === "\n" || char === "\r") {
-        inLineComment = false;
-        result += char;
-      }
-      continue;
-    }
-
-    if (inBlockComment) {
-      if (char === "*" && next === "/") {
-        inBlockComment = false;
-        index += 1;
-        continue;
-      }
-
-      if (char === "\n" || char === "\r") {
-        result += char;
-      }
-      continue;
-    }
-
-    if (inString) {
-      result += char;
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      result += char;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      inLineComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (char === "/" && next === "*") {
-      inBlockComment = true;
-      index += 1;
-      continue;
-    }
-
-    result += char;
-  }
-
-  return result;
+const getLineAndColumn = (content: string, offset: number) => {
+  const head = content.slice(0, Math.max(0, offset));
+  const lines = head.split(/\r\n|\r|\n/u);
+  const line = lines.length;
+  const column = (lines[lines.length - 1] ?? "").length + 1;
+  return { line, column };
 };
 
-const stripTrailingJsonCommas = (content: string): string => {
-  let result = "";
-  let inString = false;
-  let escaped = false;
+const formatJsonParseError = (content: string, error: ParseError, format: "json" | "jsonc") => {
+  const location = getLineAndColumn(content, error.offset);
+  const reason = printParseErrorCode(error.error);
+  return `${format.toUpperCase()} parse error (${reason}) at line ${location.line}, column ${location.column}.`;
+};
 
-  for (let index = 0; index < content.length; index += 1) {
-    const char = content[index] ?? "";
-
-    if (inString) {
-      result += char;
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      result += char;
-      continue;
-    }
-
-    if (char === ",") {
-      let lookahead = index + 1;
-      while (lookahead < content.length && /\s/u.test(content[lookahead] ?? "")) {
-        lookahead += 1;
-      }
-
-      const nextToken = content[lookahead];
-      if (nextToken === "}" || nextToken === "]") {
-        continue;
-      }
-    }
-
-    result += char;
+const parseJsonContent = (content: string): unknown => {
+  if (!content.trim()) {
+    return {};
   }
 
-  return result;
+  const errors: ParseError[] = [];
+  const parsed = parseJson(content, errors, {
+    allowEmptyContent: true,
+    allowTrailingComma: false,
+    disallowComments: true,
+  });
+
+  const firstError = errors[0];
+  if (firstError) {
+    throw new Error(formatJsonParseError(content, firstError, "json"));
+  }
+
+  return parsed ?? {};
 };
 
 const parseJsoncContent = (content: string): unknown => {
@@ -160,18 +83,24 @@ const parseJsoncContent = (content: string): unknown => {
     return {};
   }
 
-  const withoutComments = stripJsonComments(content);
-  const withoutTrailingCommas = stripTrailingJsonCommas(withoutComments);
-  const normalized = withoutTrailingCommas.replace(/^\uFEFF/u, "");
-  return JSON.parse(normalized);
+  const errors: ParseError[] = [];
+  const parsed = parseJson(content, errors, {
+    allowEmptyContent: true,
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+
+  const firstError = errors[0];
+  if (firstError) {
+    throw new Error(formatJsonParseError(content, firstError, "jsonc"));
+  }
+
+  return parsed ?? {};
 };
 
 const parseConfigContent = (content: string, format: ConfigFormat): unknown => {
   if (format === "json") {
-    if (!content.trim()) {
-      return {};
-    }
-    return JSON.parse(content);
+    return parseJsonContent(content);
   }
 
   if (format === "jsonc") {

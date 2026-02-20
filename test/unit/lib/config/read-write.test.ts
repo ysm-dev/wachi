@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readConfig } from "../../../../src/lib/config/read.ts";
 import { writeConfig } from "../../../../src/lib/config/write.ts";
 import { WachiError } from "../../../../src/utils/error.ts";
 import {
+  getDefaultConfigPath,
   getDefaultJsonConfigPath,
   getDefaultJsoncConfigPath,
 } from "../../../../src/utils/paths.ts";
@@ -14,6 +15,39 @@ const tempDirs: string[] = [];
 const envSnapshot = {
   HOME: process.env.HOME,
   WACHI_CONFIG_PATH: process.env.WACHI_CONFIG_PATH,
+};
+
+const withIsolatedDefaultConfigFiles = async (
+  run: (paths: { yamlPath: string; jsoncPath: string; jsonPath: string }) => Promise<void>,
+): Promise<void> => {
+  const yamlPath = getDefaultConfigPath();
+  const jsoncPath = getDefaultJsoncConfigPath();
+  const jsonPath = getDefaultJsonConfigPath();
+  const managedPaths = [yamlPath, jsoncPath, jsonPath];
+  const backups: Array<{ originalPath: string; backupPath: string }> = [];
+
+  for (const path of managedPaths) {
+    try {
+      await access(path);
+      const backupPath = `${path}.wachi-test-backup-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      await rename(path, backupPath);
+      backups.push({ originalPath: path, backupPath });
+    } catch {
+      // file absent
+    }
+  }
+
+  try {
+    await run({ yamlPath, jsoncPath, jsonPath });
+  } finally {
+    for (const path of managedPaths) {
+      await rm(path, { force: true });
+    }
+
+    for (const backup of backups.reverse()) {
+      await rename(backup.backupPath, backup.originalPath);
+    }
+  }
 };
 
 afterEach(async () => {
@@ -127,45 +161,35 @@ describe("config read/write", () => {
   });
 
   it("prefers config.json when config.yml and config.jsonc are absent", async () => {
-    const home = await mkdtemp(join(tmpdir(), "wachi-home-"));
-    tempDirs.push(home);
-    process.env.HOME = home;
-    delete process.env.WACHI_CONFIG_PATH;
+    await withIsolatedDefaultConfigFiles(async ({ jsonPath }) => {
+      const configDir = dirname(jsonPath);
+      await mkdir(configDir, { recursive: true });
+      await writeFile(
+        jsonPath,
+        JSON.stringify({ channels: [{ apprise_url: "slack://x/y", subscriptions: [] }] }),
+        "utf8",
+      );
 
-    const jsonPath = getDefaultJsonConfigPath();
-    const configDir = dirname(jsonPath);
-    await mkdir(configDir, { recursive: true });
-    await writeFile(
-      jsonPath,
-      JSON.stringify({ channels: [{ apprise_url: "slack://x/y", subscriptions: [] }] }),
-      "utf8",
-    );
-
-    const read = await readConfig();
-    expect(read.path.endsWith("config.json")).toBe(true);
-    expect(read.format).toBe("json");
-    expect(read.config.channels).toHaveLength(1);
+      const read = await readConfig();
+      expect(read.path.endsWith("config.json")).toBe(true);
+      expect(read.format).toBe("json");
+      expect(read.config.channels).toHaveLength(1);
+    });
   });
 
   it("prefers config.jsonc over config.json when config.yml is absent", async () => {
-    const home = await mkdtemp(join(tmpdir(), "wachi-home-jsonc-"));
-    tempDirs.push(home);
-    process.env.HOME = home;
-    delete process.env.WACHI_CONFIG_PATH;
+    await withIsolatedDefaultConfigFiles(async ({ jsonPath, jsoncPath }) => {
+      const configDir = dirname(jsonPath);
+      await mkdir(configDir, { recursive: true });
 
-    const jsonPath = getDefaultJsonConfigPath();
-    const jsoncPath = getDefaultJsoncConfigPath();
-    const configDir = dirname(jsonPath);
-    await mkdir(configDir, { recursive: true });
-
-    await writeFile(
-      jsonPath,
-      JSON.stringify({ channels: [{ apprise_url: "slack://json/path", subscriptions: [] }] }),
-      "utf8",
-    );
-    await writeFile(
-      jsoncPath,
-      `{
+      await writeFile(
+        jsonPath,
+        JSON.stringify({ channels: [{ apprise_url: "slack://json/path", subscriptions: [] }] }),
+        "utf8",
+      );
+      await writeFile(
+        jsoncPath,
+        `{
   // this should win over config.json
   "channels": [
     {
@@ -175,13 +199,14 @@ describe("config read/write", () => {
   ],
 }
 `,
-      "utf8",
-    );
+        "utf8",
+      );
 
-    const read = await readConfig();
-    expect(read.path.endsWith("config.jsonc")).toBe(true);
-    expect(read.format).toBe("jsonc");
-    expect(read.config.channels[0]?.apprise_url).toBe("slack://jsonc/path");
+      const read = await readConfig();
+      expect(read.path.endsWith("config.jsonc")).toBe(true);
+      expect(read.format).toBe("jsonc");
+      expect(read.config.channels[0]?.apprise_url).toBe("slack://jsonc/path");
+    });
   });
 
   it("throws WachiError for invalid config content", async () => {
