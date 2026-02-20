@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { getEnv } from "../../utils/env.ts";
 import { WachiError } from "../../utils/error.ts";
-import { ensureParentDir, getDefaultDbPath } from "../../utils/paths.ts";
+import { ensureParentDir, getDefaultDbPath, getLegacyNodejsDbPath } from "../../utils/paths.ts";
 import { generatedMigrations } from "./generated-migrations.ts";
 import { dbSchema } from "./schema.ts";
 
@@ -30,6 +31,63 @@ const removeDbFiles = async (dbPath: string): Promise<void> => {
   await rm(`${dbPath}-shm`, { force: true });
 };
 
+const pathExists = async (path: string): Promise<boolean> => {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const escapeSqliteString = (value: string): string => {
+  return value.replaceAll("'", "''");
+};
+
+const exportLegacyDb = (legacyDbPath: string, canonicalDbPath: string): void => {
+  const sqlite = new Database(legacyDbPath);
+  try {
+    sqlite.exec("PRAGMA busy_timeout = 5000;");
+    sqlite.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    sqlite.exec(`VACUUM INTO '${escapeSqliteString(canonicalDbPath)}';`);
+  } finally {
+    sqlite.close();
+  }
+};
+
+const migrateLegacyDbIfNeeded = async (canonicalDbPath: string): Promise<string> => {
+  if (await pathExists(canonicalDbPath)) {
+    return canonicalDbPath;
+  }
+
+  const legacyDbPath = getLegacyNodejsDbPath();
+  if (!(await pathExists(legacyDbPath))) {
+    return canonicalDbPath;
+  }
+
+  await ensureParentDir(canonicalDbPath);
+  exportLegacyDb(legacyDbPath, canonicalDbPath);
+  await removeDbFiles(legacyDbPath);
+  process.stderr.write(
+    `Warning: Migrated database from legacy runtime path to ${canonicalDbPath}.\n`,
+  );
+  return canonicalDbPath;
+};
+
+const resolveDbPath = async (dbPathOverride?: string): Promise<string> => {
+  if (dbPathOverride) {
+    return dbPathOverride;
+  }
+
+  const env = getEnv();
+  if (env.dbPath) {
+    return env.dbPath;
+  }
+
+  const canonicalDbPath = getDefaultDbPath();
+  return await migrateLegacyDbIfNeeded(canonicalDbPath);
+};
+
 const initializeSqlite = async (path: string): Promise<ConnectedDb> => {
   const sqlite = new Database(path, { create: true });
   sqlite.exec("PRAGMA journal_mode = WAL;");
@@ -41,7 +99,7 @@ const initializeSqlite = async (path: string): Promise<ConnectedDb> => {
 };
 
 export const connectDb = async (dbPathOverride?: string): Promise<ConnectedDb> => {
-  const dbPath = dbPathOverride ?? getDefaultDbPath();
+  const dbPath = await resolveDbPath(dbPathOverride);
   await ensureParentDir(dbPath);
 
   try {

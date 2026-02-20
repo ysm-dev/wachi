@@ -3,8 +3,8 @@ import { dirname, join } from "node:path";
 import envPaths from "env-paths";
 import { getEnv } from "./env.ts";
 
-export const getWachiPaths = () => {
-  return envPaths("wachi", { suffix: "" });
+export const getWachiPaths = (appName = "wachi") => {
+  return envPaths(appName, { suffix: "" });
 };
 
 export const getDefaultConfigPath = (): string => {
@@ -27,6 +27,11 @@ export const getDefaultDbPath = (): string => {
     return env.dbPath;
   }
   const paths = getWachiPaths();
+  return join(paths.data, "wachi.db");
+};
+
+export const getLegacyNodejsDbPath = (): string => {
+  const paths = getWachiPaths("wachi-nodejs");
   return join(paths.data, "wachi.db");
 };
 
