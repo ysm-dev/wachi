@@ -9,6 +9,70 @@ const parsedFeedItemSchema = z.object({
 
 export type ParsedFeedItem = z.infer<typeof parsedFeedItemSchema>;
 
+const parsedFeedSchema = z.object({
+  title: z.string().nullable(),
+  imageUrl: z.string().nullable(),
+  items: z.array(parsedFeedItemSchema),
+});
+
+export type ParsedFeed = z.infer<typeof parsedFeedSchema>;
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
+
+const asCleanString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const extractFeedImageUrl = (feed: unknown): string | null => {
+  const feedRecord = asRecord(feed);
+  if (!feedRecord) {
+    return null;
+  }
+
+  const feedImage = asRecord(feedRecord.image);
+  const feedImageUrl = asCleanString(feedImage?.url);
+  if (feedImageUrl) {
+    return feedImageUrl;
+  }
+
+  const itunesImage = feedRecord["itunes:image"];
+  const itunesImageUrl = asCleanString(itunesImage);
+  if (itunesImageUrl) {
+    return itunesImageUrl;
+  }
+
+  const itunesImageRecord = asRecord(itunesImage);
+  const attrHref = asCleanString(itunesImageRecord?.href);
+  if (attrHref) {
+    return attrHref;
+  }
+
+  const attrRecord = asRecord(itunesImageRecord?.$);
+  const xmlHref = asCleanString(attrRecord?.href);
+  if (xmlHref) {
+    return xmlHref;
+  }
+
+  const itunesRecord = asRecord(feedRecord.itunes);
+  const nestedItunesImage = itunesRecord?.image;
+  const nestedItunesImageUrl = asCleanString(nestedItunesImage);
+  if (nestedItunesImageUrl) {
+    return nestedItunesImageUrl;
+  }
+
+  const nestedItunesImageRecord = asRecord(nestedItunesImage);
+  return asCleanString(nestedItunesImageRecord?.href);
+};
+
 const parseDate = (value: string | undefined): string | null => {
   if (!value) {
     return null;
@@ -28,10 +92,7 @@ const sortOldestFirst = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
   });
 };
 
-export const parseRssItems = async (
-  xml: string,
-  subscriptionUrl: string,
-): Promise<ParsedFeedItem[]> => {
+export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promise<ParsedFeed> => {
   const parser = new Parser();
   const feed = await parser.parseString(xml);
 
@@ -46,5 +107,17 @@ export const parseRssItems = async (
     };
   });
 
-  return sortOldestFirst(items);
+  return {
+    title: asCleanString((feed as { title?: unknown }).title),
+    imageUrl: extractFeedImageUrl(feed),
+    items: sortOldestFirst(items),
+  };
+};
+
+export const parseRssItems = async (
+  xml: string,
+  subscriptionUrl: string,
+): Promise<ParsedFeedItem[]> => {
+  const parsed = await parseRssFeed(xml, subscriptionUrl);
+  return parsed.items;
 };
