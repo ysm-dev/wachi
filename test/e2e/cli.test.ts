@@ -126,7 +126,7 @@ describe("wachi CLI", () => {
       fetch(request) {
         const url = new URL(request.url);
         if (url.pathname === "/feed.xml") {
-          const originUrl = `http://127.0.0.1:${server.port}/site/`;
+          const originUrl = `${url.origin}/site/`;
           const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel><title>Test Feed</title><link>${originUrl}</link>
 <item><title>Item 1</title><link>/1</link><guid>/1</guid></item>
