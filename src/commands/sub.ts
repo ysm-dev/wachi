@@ -39,7 +39,12 @@ const findExistingSubscription = (
   channel: { subscriptions: SubscriptionConfig[] } | undefined,
   normalizedUrl: string,
 ) => {
-  return channel?.subscriptions.find((subscription) => subscription.url === normalizedUrl);
+  return channel?.subscriptions.find((subscription) => {
+    if (subscription.url === normalizedUrl) {
+      return true;
+    }
+    return isRssSubscription(subscription) && subscription.rss_url === normalizedUrl;
+  });
 };
 
 export const subCommand = defineCommand({
@@ -131,12 +136,12 @@ export const subCommand = defineCommand({
           printJsonSuccess({
             channel: channelIdentity,
             type: isCssSubscription(existingSubscription) ? "css" : "rss",
-            url: normalized.url,
+            url: existingSubscription.url,
             rss_url: isRssSubscription(existingSubscription) ? existingSubscription.rss_url : null,
             baseline_count: 0,
           });
         } else {
-          printStdout(`Already subscribed: ${normalized.url} -> ${channelIdentity}`);
+          printStdout(`Already subscribed: ${existingSubscription.url} -> ${channelIdentity}`);
         }
         return 0;
       }
@@ -175,7 +180,7 @@ export const subCommand = defineCommand({
         baselineCount = seedDedupRecords(
           db,
           channelIdentity,
-          normalized.url,
+          prepared.subscription.url,
           prepared.baselineItems,
         );
         sqlite.close();
@@ -185,18 +190,18 @@ export const subCommand = defineCommand({
         printJsonSuccess({
           channel: channelIdentity,
           type: prepared.subscriptionType,
-          url: normalized.url,
+          url: prepared.subscription.url,
           rss_url: isRssSubscription(prepared.subscription) ? prepared.subscription.rss_url : null,
           baseline_count: sendExisting ? 0 : baselineCount,
         });
       } else if (isRssSubscription(prepared.subscription)) {
         printStdout(`Channel: ${channelIdentity}`);
-        printStdout(`Subscribed (RSS): ${normalized.url}`);
+        printStdout(`Subscribed (RSS): ${prepared.subscription.url}`);
         printStdout(`Feed: ${prepared.subscription.rss_url}`);
         printStdout(`Baseline: ${sendExisting ? 0 : baselineCount} items seeded`);
       } else if (isCssSubscription(prepared.subscription)) {
         printStdout(`Channel: ${channelIdentity}`);
-        printStdout(`Subscribed (CSS): ${normalized.url}`);
+        printStdout(`Subscribed (CSS): ${prepared.subscription.url}`);
         printStdout(`Selector: ${prepared.subscription.item_selector}`);
         printStdout(`Baseline: ${sendExisting ? 0 : baselineCount} items seeded`);
       }

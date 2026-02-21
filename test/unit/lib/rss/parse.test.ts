@@ -112,8 +112,41 @@ describe("parseRssItems", () => {
     const parsed = await parseRssFeed(xml, "https://example.com/feed.xml");
 
     expect(parsed.title).toBe("Daily Example");
+    expect(parsed.siteUrl).toBeNull();
     expect(parsed.imageUrl).toBe("https://example.com/logo-512.png");
     expect(parsed.items).toHaveLength(1);
+  });
+
+  it("resolves relative feed channel links to absolute site URLs", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Daily Example</title>
+    <link>/blog</link>
+    <item>
+      <title>Item</title>
+      <link>https://example.com/item</link>
+    </item>
+  </channel>
+</rss>`;
+
+    const parsed = await parseRssFeed(xml, "https://example.com/feed.xml");
+
+    expect(parsed.siteUrl).toBe("https://example.com/blog");
+  });
+
+  it("returns null site URL when relative feed link cannot be resolved", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Daily Example</title>
+    <link>/blog</link>
+  </channel>
+</rss>`;
+
+    const parsed = await parseRssFeed(xml, "not-a-url");
+
+    expect(parsed.siteUrl).toBeNull();
   });
 
   it("extracts itunes image URL when parser returns a plain string", async () => {
@@ -186,6 +219,7 @@ describe("parseRssItems", () => {
     const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
 
     expect(parsed.title).toBe("Function Feed");
+    expect(parsed.siteUrl).toBeNull();
     expect(parsed.imageUrl).toBeNull();
     expect(parsed.items).toEqual([]);
   });

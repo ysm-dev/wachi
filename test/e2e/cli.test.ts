@@ -115,6 +115,77 @@ describe("wachi CLI", () => {
     expect(unsub.stdout).toContain("Removed:");
   });
 
+  it("stores RSS origin URL from feed link and supports feed-url dedupe/remove", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-rss-origin-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const dbPath = join(dir, "wachi.db");
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/feed.xml") {
+          const originUrl = `${url.origin}/site/`;
+          const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Test Feed</title><link>${originUrl}</link>
+<item><title>Item 1</title><link>/1</link><guid>/1</guid></item>
+</channel></rss>`;
+          return new Response(xml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        if (url.pathname === "/site" || url.pathname === "/site/") {
+          return new Response("ok");
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const originUrl = `http://127.0.0.1:${server.port}/site`;
+    const baseEnv = {
+      WACHI_DB_PATH: dbPath,
+      WACHI_NO_AUTO_UPDATE: "1",
+    };
+
+    const firstSub = await runCli(
+      ["sub", "-n", "main", "-a", "slack://token/channel", feedUrl, "--config", configPath],
+      baseEnv,
+    );
+    expect(firstSub.exitCode).toBe(0);
+    expect(firstSub.stdout).toContain(`Subscribed (RSS): ${originUrl}`);
+    expect(firstSub.stdout).toContain(`Feed: ${feedUrl}`);
+
+    const listed = await runCli(["ls", "--json", "--config", configPath], baseEnv);
+    expect(listed.exitCode).toBe(0);
+    const listedPayload = JSON.parse(listed.stdout);
+    const subscription = listedPayload.data.channels[0]?.subscriptions[0];
+    expect(subscription?.url).toBe(originUrl);
+    expect(subscription?.rss_url).toBe(feedUrl);
+
+    const secondSub = await runCli(
+      ["sub", "--json", "-n", "main", feedUrl, "--config", configPath],
+      baseEnv,
+    );
+    expect(secondSub.exitCode).toBe(0);
+    const secondPayload = JSON.parse(secondSub.stdout);
+    expect(secondPayload.ok).toBe(true);
+    expect(secondPayload.data.url).toBe(originUrl);
+    expect(secondPayload.data.rss_url).toBe(feedUrl);
+    expect(secondPayload.data.baseline_count).toBe(0);
+
+    const unsub = await runCli(["unsub", "-n", "main", feedUrl, "--config", configPath], baseEnv);
+    expect(unsub.exitCode).toBe(0);
+    expect(unsub.stdout).toContain("Removed:");
+
+    const listedAfterUnsub = await runCli(["ls", "--json", "--config", configPath], baseEnv);
+    expect(listedAfterUnsub.exitCode).toBe(0);
+    const listedAfterUnsubPayload = JSON.parse(listedAfterUnsub.stdout);
+    expect(listedAfterUnsubPayload.data.channels).toEqual([]);
+  });
+
   it("supports send-existing flag in JSON output", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-send-existing-"));
     testDirs.push(dir);

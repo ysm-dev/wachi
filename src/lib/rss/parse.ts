@@ -11,6 +11,7 @@ export type ParsedFeedItem = z.infer<typeof parsedFeedItemSchema>;
 
 const parsedFeedSchema = z.object({
   title: z.string().nullable(),
+  siteUrl: z.string().nullable(),
   imageUrl: z.string().nullable(),
   items: z.array(parsedFeedItemSchema),
 });
@@ -73,6 +74,27 @@ const extractFeedImageUrl = (feed: unknown): string | null => {
   return asCleanString(nestedItunesImageRecord?.href);
 };
 
+const extractFeedSiteUrl = (feed: unknown): string | null => {
+  const feedRecord = asRecord(feed);
+  if (!feedRecord) {
+    return null;
+  }
+
+  return asCleanString(feedRecord.link);
+};
+
+const resolveOptionalUrl = (value: string | null, baseUrl: string): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return null;
+  }
+};
+
 const parseDate = (value: string | undefined): string | null => {
   if (!value) {
     return null;
@@ -109,6 +131,7 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
 
   return {
     title: asCleanString((feed as { title?: unknown }).title),
+    siteUrl: resolveOptionalUrl(extractFeedSiteUrl(feed), subscriptionUrl),
     imageUrl: extractFeedImageUrl(feed),
     items: sortOldestFirst(items),
   };

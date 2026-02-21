@@ -3,6 +3,7 @@ import { z } from "zod";
 import { printJsonSuccess, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
 import { readConfig } from "../lib/config/read.ts";
+import { isRssSubscription } from "../lib/config/schema.ts";
 import { writeConfig } from "../lib/config/write.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
 import {
@@ -82,9 +83,12 @@ export const unsubCommand = defineCommand({
 
       const normalized = normalizeUrl(parsedArgs.url).url;
       const previousCount = channel.subscriptions.length;
-      channel.subscriptions = channel.subscriptions.filter(
-        (subscription) => subscription.url !== normalized,
-      );
+      channel.subscriptions = channel.subscriptions.filter((subscription) => {
+        if (subscription.url === normalized) {
+          return false;
+        }
+        return !(isRssSubscription(subscription) && subscription.rss_url === normalized);
+      });
 
       if (channel.subscriptions.length === 0) {
         channels.splice(channelIndex, 1);
