@@ -1,5 +1,6 @@
 import { access, chmod, rename } from "node:fs/promises";
 import { getPendingUpdatePath } from "../../utils/paths.ts";
+import { detectInstallMethod } from "./detect-method.ts";
 
 const fileExists = async (path: string): Promise<boolean> => {
   try {
@@ -18,6 +19,10 @@ export const applyPendingAutoUpdate = async (): Promise<boolean> => {
 
   const currentBinaryPath = process.execPath;
   if (!currentBinaryPath || currentBinaryPath.endsWith("bun")) {
+    return false;
+  }
+
+  if (detectInstallMethod(currentBinaryPath) !== "binary") {
     return false;
   }
 

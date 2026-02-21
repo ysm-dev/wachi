@@ -22,9 +22,24 @@ const runBinary = (binaryPath) => {
   const result = spawnSync(binaryPath, args, {
     stdio: "inherit",
   });
+
+  if (result.error) {
+    process.stderr.write(
+      `Error: Failed to run wachi binary at ${binaryPath}.\n` +
+        `${result.error.message}\n` +
+        "Try reinstalling wachi and its optional platform package.\n",
+    );
+    process.exit(1);
+  }
+
   if (typeof result.status === "number") {
     process.exit(result.status);
   }
+
+  if (typeof result.signal === "string") {
+    process.stderr.write(`Error: wachi binary terminated by signal ${result.signal}.\n`);
+  }
+
   process.exit(1);
 };
 

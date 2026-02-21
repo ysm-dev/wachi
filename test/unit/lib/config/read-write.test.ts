@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,10 +12,17 @@ import {
 } from "../../../../src/utils/paths.ts";
 
 const tempDirs: string[] = [];
+let pathsRoot = "";
 const envSnapshot = {
-  HOME: process.env.HOME,
   WACHI_CONFIG_PATH: process.env.WACHI_CONFIG_PATH,
+  WACHI_PATHS_ROOT: process.env.WACHI_PATHS_ROOT,
 };
+
+beforeEach(async () => {
+  pathsRoot = await mkdtemp(join(tmpdir(), "wachi-path-root-"));
+  process.env.WACHI_PATHS_ROOT = pathsRoot;
+  tempDirs.push(pathsRoot);
+});
 
 const withIsolatedDefaultConfigFiles = async (
   run: (paths: { yamlPath: string; jsoncPath: string; jsonPath: string }) => Promise<void>,
@@ -51,8 +58,9 @@ const withIsolatedDefaultConfigFiles = async (
 };
 
 afterEach(async () => {
-  process.env.HOME = envSnapshot.HOME;
   process.env.WACHI_CONFIG_PATH = envSnapshot.WACHI_CONFIG_PATH;
+  process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
+  pathsRoot = "";
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     await rm(dir, { recursive: true, force: true });
   }

@@ -1,9 +1,29 @@
 import { mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import envPaths from "env-paths";
 import { getEnv } from "./env.ts";
 
+const getPathOverride = (appName: string) => {
+  const env = getEnv();
+  if (!env.pathsRoot) {
+    return null;
+  }
+
+  const root = join(resolve(env.pathsRoot), appName);
+  return {
+    data: join(root, "data"),
+    config: join(root, "config"),
+    cache: join(root, "cache"),
+    log: join(root, "log"),
+    temp: join(root, "tmp"),
+  };
+};
+
 export const getWachiPaths = (appName = "wachi") => {
+  const override = getPathOverride(appName);
+  if (override) {
+    return override;
+  }
   return envPaths(appName, { suffix: "" });
 };
 

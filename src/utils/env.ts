@@ -15,6 +15,7 @@ export const getEnv = () => {
     appriseUrlOverride: readEnv("WACHI_APPRISE_URL"),
     configPath: readEnv("WACHI_CONFIG_PATH"),
     dbPath: readEnv("WACHI_DB_PATH"),
+    pathsRoot: readEnv("WACHI_PATHS_ROOT"),
     noAutoUpdate: readEnv("WACHI_NO_AUTO_UPDATE") === "1",
   };
 };

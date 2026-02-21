@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,13 +15,24 @@ import {
 const envSnapshot = {
   WACHI_CONFIG_PATH: process.env.WACHI_CONFIG_PATH,
   WACHI_DB_PATH: process.env.WACHI_DB_PATH,
-  HOME: process.env.HOME,
+  WACHI_PATHS_ROOT: process.env.WACHI_PATHS_ROOT,
 };
+
+let pathsRoot = "";
+
+beforeEach(async () => {
+  pathsRoot = await mkdtemp(join(tmpdir(), "wachi-paths-home-"));
+  process.env.WACHI_PATHS_ROOT = pathsRoot;
+});
 
 afterEach(async () => {
   process.env.WACHI_CONFIG_PATH = envSnapshot.WACHI_CONFIG_PATH;
   process.env.WACHI_DB_PATH = envSnapshot.WACHI_DB_PATH;
-  process.env.HOME = envSnapshot.HOME;
+  process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
+  if (pathsRoot) {
+    await rm(pathsRoot, { recursive: true, force: true });
+    pathsRoot = "";
+  }
 });
 
 describe("paths", () => {
@@ -33,19 +44,16 @@ describe("paths", () => {
     expect(getDefaultDbPath()).toBe("/tmp/custom.db");
   });
 
-  it("returns default file names for derived paths", async () => {
-    const home = await mkdtemp(join(tmpdir(), "wachi-home-"));
-    process.env.HOME = home;
+  it("returns default file names for derived paths", () => {
     delete process.env.WACHI_CONFIG_PATH;
     delete process.env.WACHI_DB_PATH;
 
+    expect(getDefaultConfigPath().startsWith(pathsRoot)).toBe(true);
     expect(getDefaultConfigPath().endsWith("config.yml")).toBe(true);
     expect(getDefaultJsoncConfigPath().endsWith("config.jsonc")).toBe(true);
     expect(getDefaultJsonConfigPath().endsWith("config.json")).toBe(true);
     expect(getDefaultDbPath().endsWith("wachi.db")).toBe(true);
     expect(getPendingUpdatePath().endsWith("wachi-new")).toBe(true);
-
-    await rm(home, { recursive: true, force: true });
   });
 
   it("derives legacy nodejs db path", () => {

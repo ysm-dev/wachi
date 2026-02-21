@@ -8,19 +8,19 @@ import { getPendingUpdatePath } from "../../../../src/utils/paths.ts";
 let tempDir = "";
 
 const envSnapshot = {
-  HOME: process.env.HOME,
+  WACHI_PATHS_ROOT: process.env.WACHI_PATHS_ROOT,
 };
 
 const originalExecPath = process.execPath;
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "wachi-update-"));
-  process.env.HOME = tempDir;
+  process.env.WACHI_PATHS_ROOT = tempDir;
 });
 
 afterEach(async () => {
   process.execPath = originalExecPath;
-  process.env.HOME = envSnapshot.HOME;
+  process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
   if (tempDir) {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -45,6 +45,29 @@ describe("applyPendingAutoUpdate", () => {
 
     const applied = await applyPendingAutoUpdate();
     expect(applied).toBe(false);
+  });
+
+  it("returns false when installed via npm", async () => {
+    const currentBinaryPath = join(
+      tempDir,
+      "node_modules",
+      "@wachi-cli",
+      "darwin-arm64",
+      "bin",
+      "wachi",
+    );
+    await mkdir(dirname(currentBinaryPath), { recursive: true });
+    await writeFile(currentBinaryPath, "old-binary", "utf8");
+
+    const pendingPath = getPendingUpdatePath();
+    await mkdir(dirname(pendingPath), { recursive: true });
+    await writeFile(pendingPath, "new-binary", "utf8");
+
+    process.execPath = currentBinaryPath;
+
+    const applied = await applyPendingAutoUpdate();
+    expect(applied).toBe(false);
+    await expect(readFile(currentBinaryPath, "utf8")).resolves.toBe("old-binary");
   });
 
   it("applies pending binary and keeps backup", async () => {
