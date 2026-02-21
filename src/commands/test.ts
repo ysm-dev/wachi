@@ -1,16 +1,14 @@
 import { defineCommand } from "citty";
 import { z } from "zod";
 import { maskAppriseUrl, printJsonSuccess, printStderr, printStdout } from "../lib/cli/io.ts";
+import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
 import { readConfig } from "../lib/config/read.ts";
 import { isCssSubscription, isRssSubscription } from "../lib/config/schema.ts";
 import { sendNotification } from "../lib/notify/send.ts";
-import {
-  normalizeAppriseUrlForIdentity,
-  type SourceIdentity,
-} from "../lib/notify/source-identity.ts";
+import type { SourceIdentity } from "../lib/notify/source-identity.ts";
 import { fetchCssSubscriptionItems } from "../lib/subscriptions/fetch-css-subscription-items.ts";
 import { fetchRssSubscriptionItems } from "../lib/subscriptions/fetch-rss-subscription-items.ts";
-import { validateAppriseUrl } from "../lib/url/validate.ts";
+import { WachiError } from "../utils/error.ts";
 import {
   commandJson,
   globalArgDefinitions,
@@ -22,31 +20,26 @@ const TEST_BODY =
   "wachi test notification -- if you see this, your notification channel is working.";
 
 const testArgsSchema = z.object({
-  appriseUrl: z.string().min(1),
+  name: z.string().trim().min(1),
   json: z.boolean().optional(),
   verbose: z.boolean().optional(),
   config: z.string().optional(),
 });
 
 const resolveTestSourceIdentity = async ({
-  appriseUrl,
+  channelName,
   configPath,
   verbose,
 }: {
-  appriseUrl: string;
+  channelName: string;
   configPath?: string;
   verbose: boolean;
 }): Promise<SourceIdentity | undefined> => {
   try {
     const configState = await readConfig(configPath);
-    const exactMatch = configState.config.channels.find(
-      (entry) => entry.apprise_url === appriseUrl,
+    const channel = configState.config.channels.find(
+      (entry) => toChannelNameKey(entry.name) === toChannelNameKey(channelName),
     );
-    const normalizedInput = normalizeAppriseUrlForIdentity(appriseUrl);
-    const normalizedMatch = configState.config.channels.find(
-      (entry) => normalizeAppriseUrlForIdentity(entry.apprise_url) === normalizedInput,
-    );
-    const channel = exactMatch ?? normalizedMatch;
     if (!channel || channel.subscriptions.length === 0) {
       return undefined;
     }
@@ -99,19 +92,32 @@ export const testCommand = defineCommand({
   },
   args: {
     ...globalArgDefinitions,
-    appriseUrl: {
-      type: "positional",
+    name: {
+      type: "string",
+      alias: "n",
       required: true,
-      description: "Apprise URL",
+      description: "Channel name",
     },
   },
   run: async ({ args }) => {
     await runWithErrorHandling(args, async () => {
       const parsedArgs = parseCommandArgs(testArgsSchema, args);
-      validateAppriseUrl(parsedArgs.appriseUrl);
+      const channelName = parsedArgs.name.trim();
+
+      const configState = await readConfig(parsedArgs.config);
+      const channel = configState.config.channels.find(
+        (entry) => toChannelNameKey(entry.name) === toChannelNameKey(channelName),
+      );
+      if (!channel) {
+        throw new WachiError(
+          `Channel not found: ${channelName}`,
+          `No channel named ${channelName} exists in config.`,
+          `Create one with: wachi sub -n "${channelName}" -a "<apprise-url>" "<url>"`,
+        );
+      }
 
       const sourceIdentity = await resolveTestSourceIdentity({
-        appriseUrl: parsedArgs.appriseUrl,
+        channelName,
         configPath: parsedArgs.config,
         verbose: parsedArgs.verbose === true,
       });
@@ -129,7 +135,7 @@ export const testCommand = defineCommand({
       }
 
       await sendNotification({
-        appriseUrl: parsedArgs.appriseUrl,
+        appriseUrl: channel.apprise_url,
         body: TEST_BODY,
         sourceIdentity,
       });
@@ -137,7 +143,9 @@ export const testCommand = defineCommand({
       if (commandJson(parsedArgs)) {
         printJsonSuccess({ sent: true });
       } else {
-        printStdout(`Test notification sent to ${maskAppriseUrl(parsedArgs.appriseUrl)}`);
+        printStdout(
+          `Test notification sent to ${channel.name} (${maskAppriseUrl(channel.apprise_url)})`,
+        );
       }
 
       return 0;

@@ -90,7 +90,7 @@ describe("wachi CLI", () => {
     };
 
     const sub = await runCli(
-      ["sub", "slack://token/channel", feedUrl, "--config", configPath],
+      ["sub", "-n", "main", "-a", "slack://token/channel", feedUrl, "--config", configPath],
       baseEnv,
     );
     expect(sub.exitCode).toBe(0);
@@ -110,10 +110,7 @@ describe("wachi CLI", () => {
     expect(dryRunNew.exitCode).toBe(0);
     expect(dryRunNew.stdout).toContain("would send: Item 2");
 
-    const unsub = await runCli(
-      ["unsub", "slack://token/channel", feedUrl, "--config", configPath],
-      baseEnv,
-    );
+    const unsub = await runCli(["unsub", "-n", "main", feedUrl, "--config", configPath], baseEnv);
     expect(unsub.exitCode).toBe(0);
     expect(unsub.stdout).toContain("Removed:");
   });
@@ -141,6 +138,9 @@ describe("wachi CLI", () => {
         "sub",
         "--json",
         "--send-existing",
+        "-n",
+        "main",
+        "-a",
         "slack://token/channel",
         feedUrl,
         "--config",

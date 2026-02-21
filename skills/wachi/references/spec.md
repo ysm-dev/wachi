@@ -14,10 +14,11 @@
 ## Architecture
 
 ```
-wachi sub <apprise-url> <url>
+wachi sub -n <name> [-a <apprise-url>] <url>
        |
        v
-  Validate apprise-url format (contains "://")
+  Resolve channel by name
+  If channel is new: validate apprise-url format (contains "://")
   Normalize URL (prepend https:// if missing, strip trailing slash)
   Validate URL is reachable (HTTP fetch)
        |
@@ -47,13 +48,13 @@ wachi sub <apprise-url> <url>
 3. For each subscription (concurrent, rate-limited per domain):
    - RSS: Fetch (with ETag/If-Modified-Since) -> Parse -> Extract items
    - CSS: HTTP fetch -> Apply selector with cheerio -> Extract items
-   - For each item: compute dedup key `sha256(link + title + channel_apprise_url)`, INSERT OR IGNORE
+   - For each item: compute dedup key `sha256(link + title + channel_name)`, INSERT OR IGNORE
    - If inserted (new): send notification via apprise
 4. Print summary: "3 new, 47 unchanged, 0 errors"
 
 ### Dedup Model
 
-Items identified by `sha256(link + title + channel_apprise_url)`. If hash exists, already sent. On first subscribe, all current items pre-seeded (baseline). Use `--send-existing` to skip baseline.
+Items identified by `sha256(link + title + channel_name)`. If hash exists, already sent. On first subscribe, all current items pre-seeded (baseline). Use `--send-existing` to skip baseline.
 
 Same URL, multiple channels: allowed. Each channel has its own dedup space.
 
@@ -91,6 +92,7 @@ cleanup:
 
 **`wachi sub` (RSS):**
 ```
+Channel: main
 Subscribed (RSS): https://blog.example.com
 Feed: https://blog.example.com/feed.xml
 Baseline: 42 items seeded
@@ -98,6 +100,7 @@ Baseline: 42 items seeded
 
 **`wachi sub` (CSS):**
 ```
+Channel: alerts
 Subscribed (CSS): https://news.ycombinator.com
 Selector: tr.athing
 Baseline: 30 items seeded
@@ -105,29 +108,29 @@ Baseline: 30 items seeded
 
 **`wachi sub` (idempotent):**
 ```
-Already subscribed: https://blog.example.com -> slack://xoxb-.../channel
+Already subscribed: https://blog.example.com -> main
 ```
 
 **`wachi ls`:**
 ```
-slack://xoxb-.../channel
+main (slack://xoxb-.../channel)
   https://blog.example.com (RSS)
   https://news.ycombinator.com (CSS) [3 failures]
 
-discord://webhook-id/token
+alerts (discord://webhook-id/token)
   https://youtube.com/@channel (RSS)
 ```
 
 **`wachi check`:**
 ```
-sent: Show HN: My Project -> slack://xoxb-.../channel
-sent: New Blog Post Title -> slack://xoxb-.../channel
+sent: Show HN: My Project -> main
+sent: New Blog Post Title -> main
 3 new, 47 unchanged, 0 errors
 ```
 
 **`wachi check --dry-run`:**
 ```
-[dry-run] would send: Show HN: My Project -> slack://xoxb-.../channel
+[dry-run] would send: Show HN: My Project -> main
 [dry-run] 2 items would be sent
 ```
 
@@ -157,7 +160,8 @@ cleanup:
   max_records: 50000
 
 channels:
-  - apprise_url: "slack://xoxb-token/channel"
+  - name: "main"
+    apprise_url: "slack://xoxb-token/channel"
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
@@ -166,6 +170,8 @@ channels:
         title_selector: ".titleline > a"
         link_selector: ".titleline > a"
 ```
+
+Each channel requires a `name` field. Channel names must be unique (case-insensitive).
 
 All top-level fields optional. Empty config is valid.
 
@@ -250,7 +256,7 @@ With summary:
 
 ### Test Notification
 
-`wachi test <apprise-url>` sends: "wachi test notification -- if you see this, your notification channel is working."
+`wachi test -n <name>` sends: "wachi test notification -- if you see this, your notification channel is working."
 
 ## Summary Feature
 

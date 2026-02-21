@@ -47,6 +47,34 @@ describe("RSS detect/discover", () => {
     expect(detected.isRss).toBe(true);
   });
 
+  it("detectRssUrl returns false for empty body", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("", { headers: { "content-type": "text/plain" } });
+      },
+    });
+    servers.push(server);
+
+    const detected = await detectRssUrl(`http://127.0.0.1:${server.port}/feed.xml`);
+    expect(detected.isRss).toBe(false);
+  });
+
+  it("detectRssUrl returns false for HTML body", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("<!doctype html><html><body>Not RSS</body></html>", {
+          headers: { "content-type": "text/plain" },
+        });
+      },
+    });
+    servers.push(server);
+
+    const detected = await detectRssUrl(`http://127.0.0.1:${server.port}/page`);
+    expect(detected.isRss).toBe(false);
+  });
+
   it("discoverRssFeedUrl finds alternate feed links from HTML fixture", async () => {
     const html = await readFile(fixturePath("html", "page-with-rss-link.html"), "utf8");
     const xml = await readFile(fixturePath("rss", "basic.xml"), "utf8");

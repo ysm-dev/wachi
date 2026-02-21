@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { maskAppriseUrl, printStderr, printStdout } from "../cli/io.ts";
+import { printStderr, printStdout } from "../cli/io.ts";
 import type { ResolvedConfig } from "../config/schema.ts";
 import { buildDedupHash } from "../db/build-dedup-hash.ts";
 import type { WachiDb } from "../db/connect.ts";
@@ -14,7 +14,7 @@ import { buildItemSummary } from "../subscriptions/summary.ts";
 const sentRecordSchema = z.object({
   title: z.string(),
   link: z.string(),
-  channel_apprise_url: z.string(),
+  channel_name: z.string(),
 });
 
 export type SentRecord = z.infer<typeof sentRecordSchema>;
@@ -39,7 +39,7 @@ const enqueueForChannelSchema =
 
 const handleItemsOptionsSchema = z.object({
   items: z.array(itemSchema),
-  channelUrl: z.string(),
+  channelName: z.string(),
   effectiveChannelUrl: z.string(),
   subscriptionUrl: z.string(),
   db: z.custom<WachiDb>(),
@@ -54,17 +54,17 @@ const handleItemsOptionsSchema = z.object({
 
 type HandleItemsOptions = z.infer<typeof handleItemsOptionsSchema>;
 
-const pushSent = (stats: CheckStats, item: Item, channelUrl: string): void => {
+const pushSent = (stats: CheckStats, item: Item, channelName: string): void => {
   stats.sent.push({
     title: item.title,
     link: item.link,
-    channel_apprise_url: channelUrl,
+    channel_name: channelName,
   });
 };
 
 export const handleSubscriptionItems = async ({
   items,
-  channelUrl,
+  channelName,
   effectiveChannelUrl,
   subscriptionUrl,
   db,
@@ -77,22 +77,22 @@ export const handleSubscriptionItems = async ({
   sourceIdentity,
 }: HandleItemsOptions): Promise<void> => {
   for (const item of items) {
-    const dedupHash = buildDedupHash(channelUrl, item.title, item.link);
+    const dedupHash = buildDedupHash(channelName, item.title, item.link);
 
     if (dryRun) {
       if (hasDedupHash(db, dedupHash)) {
         stats.skipped += 1;
         continue;
       }
-      pushSent(stats, item, channelUrl);
+      pushSent(stats, item, channelName);
       if (!isJson) {
-        printStdout(`[dry-run] would send: ${item.title} -> ${maskAppriseUrl(channelUrl)}`);
+        printStdout(`[dry-run] would send: ${item.title} -> ${channelName}`);
       }
       continue;
     }
 
     const inserted = insertDedupRecord(db, {
-      channelUrl,
+      channelUrl: channelName,
       subscriptionUrl,
       title: item.title,
       link: item.link,
@@ -117,9 +117,9 @@ export const handleSubscriptionItems = async ({
           sourceIdentity,
         });
       });
-      pushSent(stats, item, channelUrl);
+      pushSent(stats, item, channelName);
       if (!isJson) {
-        printStdout(`sent: ${item.title} -> ${maskAppriseUrl(channelUrl)}`);
+        printStdout(`sent: ${item.title} -> ${channelName}`);
       }
     } catch (error) {
       deleteDedupRecord(db, dedupHash);

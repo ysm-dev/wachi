@@ -16,10 +16,11 @@ wachi is a stateless CLI tool that monitors URLs for changes and delivers notifi
 ## Architecture
 
 ```
-wachi sub <apprise-url> <url>
+wachi sub -n <name> [-a <apprise-url>] <url>
        |
        v
-  Validate apprise-url format (contains "://")
+  Resolve channel by name
+  If channel is new: validate apprise-url format (contains "://")
   Normalize URL (prepend https:// if missing, strip trailing slash)
   Validate URL is reachable (HTTP fetch)
        |
@@ -61,14 +62,14 @@ wachi sub <apprise-url> <url>
 1. Auto-update check (24h cooldown, non-blocking)          -- always runs (global)
 2. Cleanup old dedup records (TTL 90 days + cap 50k)       -- always runs (global)
 3. For each subscription (concurrent via p-limit, rate-limited per domain):
-   (if --channel is set, only subscriptions for that channel are checked)
+   (if --name is set, only subscriptions for that channel are checked)
      |
      RSS? --> Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Extract items
      CSS? --> HTTP fetch --> Apply selector with cheerio --> Extract items
      |
      For each item:
        Resolve relative URLs against subscription URL
-       Compute dedup key: sha256(link + title + channel_apprise_url)
+       Compute dedup key: sha256(link + title + channel_name)
        INSERT OR IGNORE into sent_items
        If inserted (new) --> Format notification --> Send via apprise (uvx)
        If ignored (duplicate) --> Skip
@@ -77,11 +78,11 @@ wachi sub <apprise-url> <url>
 
 ### Dedup Model
 
-Instead of tracking "seen/unseen" state, wachi uses a simple dedup table. Each item is identified by `sha256(link + title + channel_apprise_url)`. If the hash already exists in the database, the item was already sent. If not, it's new -- send it and record the hash.
+Instead of tracking "seen/unseen" state, wachi uses a simple dedup table. Each item is identified by `sha256(link + title + channel_name)`. If the hash already exists in the database, the item was already sent. If not, it's new -- send it and record the hash.
 
 On first subscribe (`wachi sub`), all current items are pre-seeded into the dedup table (baseline, no cap) so the channel is not flooded. Use `--send-existing` / `-e` flag to skip baseline and send all current items on next check.
 
-**Same URL, multiple channels:** Allowed. Each channel has its own dedup space (hash includes `channel_apprise_url`). The same item gets sent to both channels independently.
+**Same URL, multiple channels:** Allowed. Each channel has its own dedup space (hash includes `channel_name`). The same item gets sent to both channels independently.
 
 ### Dedup Cleanup
 
@@ -136,24 +137,25 @@ Running `wachi` with no subcommand shows help (same as `wachi --help`).
 ### Commands
 
 ```
-wachi sub <apprise-url> <url>     # Subscribe a URL to a notification channel
+wachi sub -n <name> <url>         # Subscribe a URL to a notification channel name
+  --apprise-url, -a <apprise-url> # Required when creating a new channel name
   --send-existing, -e             # Skip baseline, send all current items on next check
   --help, -h
 
-wachi unsub <apprise-url> <url>   # Unsubscribe a URL from a channel
-wachi unsub <apprise-url>         # Remove a channel and all its subscriptions
+wachi unsub -n <name> <url>       # Unsubscribe a URL from a channel
+wachi unsub -n <name>             # Remove a channel and all its subscriptions
   --help, -h
 
 wachi ls                          # List all channels and their subscriptions
   --help, -h
 
 wachi check                       # Check all subscriptions for changes (one-shot)
-  --channel, -c <apprise-url>     # Check specific channel only (housekeeping still runs globally)
-  --concurrency, -n <number>      # Max concurrent checks (default: 10)
+  --name, -n <name>               # Check specific channel only (housekeeping still runs globally)
+  --concurrency, -p <number>      # Max concurrent checks (default: 10)
   --dry-run, -d                   # Show what would be sent without sending or recording
   --help, -h
 
-wachi test <apprise-url>          # Send a test notification to verify channel works
+wachi test -n <name>              # Send a test notification to verify channel works
   --help, -h
 
 wachi upgrade                     # Update wachi to latest version
@@ -199,22 +201,22 @@ All commands with `--json` / `-j` return a consistent envelope:
 
 Command-specific `data` shapes:
 
-- `wachi ls --json`: `{"channels": [{"apprise_url": "...", "subscriptions": [...]}]}`
-- `wachi check --json`: `{"sent": [...], "skipped": 47, "errors": [...]}`
-- `wachi sub --json`: `{"type": "rss", "url": "...", "rss_url": "...", "baseline_count": 42}`
+- `wachi ls --json`: `{"channels": [{"name": "...", "apprise_url": "...", "subscriptions": [...]}]}`
+- `wachi check --json`: `{"sent": [{"title": "...", "link": "...", "channel_name": "main"}], "skipped": 47, "errors": [...]}`
+- `wachi sub --json`: `{"channel": "main", "type": "rss", "url": "...", "rss_url": "...", "baseline_count": 42}`
 - `wachi test --json`: `{"sent": true}`
 
 ### Examples
 
 ```bash
 # Subscribe to a blog via its URL (auto-discovers RSS)
-wachi sub "slack://xoxb-token/channel" "https://blog.example.com"
+wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
 # Subscribe and send all existing items on next check
-wachi sub -e "discord://webhook-id/token" "https://news.ycombinator.com"
+wachi sub -n alerts -a "discord://webhook-id/token" -e "https://news.ycombinator.com"
 
 # Subscribe without https:// (auto-prepended)
-wachi sub "slack://token/channel" "blog.example.com"
+wachi sub -n main "blog.example.com"
 
 # List all subscriptions with health indicators
 wachi ls
@@ -226,10 +228,10 @@ wachi check
 wachi check -d
 
 # Check specific channel only
-wachi check -c "slack://xoxb-token/channel"
+wachi check -n main
 
 # Test a notification channel
-wachi test "slack://xoxb-token/channel"
+wachi test -n main
 
 # Update wachi
 wachi upgrade
@@ -243,6 +245,7 @@ crnd "*/5 * * * *" wachi check
 **`wachi sub` success output:**
 
 ```
+Channel: main
 Subscribed (RSS): https://blog.example.com
 Feed: https://blog.example.com/feed.xml
 Baseline: 42 items seeded
@@ -251,6 +254,7 @@ Baseline: 42 items seeded
 or for CSS:
 
 ```
+Channel: alerts
 Subscribed (CSS): https://news.ycombinator.com
 Selector: tr.athing
 Baseline: 30 items seeded
@@ -259,7 +263,7 @@ Baseline: 30 items seeded
 **`wachi sub` idempotent (already exists):**
 
 ```
-Already subscribed: https://blog.example.com -> slack://xoxb-.../channel
+Already subscribed: https://blog.example.com -> main
 ```
 
 Exit 0. No-op.
@@ -267,47 +271,47 @@ Exit 0. No-op.
 **`wachi unsub` output:**
 
 ```
-Removed: https://blog.example.com from slack://xoxb-.../channel
+Removed: https://blog.example.com from main
 ```
 
 or for entire channel removal:
 
 ```
-Removed channel slack://xoxb-.../channel (3 subscriptions)
+Removed channel main (3 subscriptions)
 ```
 
 **`wachi ls` output (indented tree with health):**
 
 ```
-slack://xoxb-.../channel
+main (slack://xoxb-.../channel)
   https://blog.example.com (RSS)
   https://news.ycombinator.com (CSS) [3 failures]
 
-discord://webhook-id/token
+alerts (discord://webhook-id/token)
   https://youtube.com/@channel (RSS)
 ```
 
 **`wachi check` output:**
 
 ```
-sent: Show HN: My Project -> slack://xoxb-.../channel
-sent: New Blog Post Title -> slack://xoxb-.../channel
-sent: Video Title -> discord://webhook-id/token
+sent: Show HN: My Project -> main
+sent: New Blog Post Title -> main
+sent: Video Title -> alerts
 3 new, 47 unchanged, 0 errors
 ```
 
 **`wachi check --dry-run` output:**
 
 ```
-[dry-run] would send: Show HN: My Project -> slack://xoxb-.../channel
-[dry-run] would send: New Blog Post Title -> slack://xoxb-.../channel
+[dry-run] would send: Show HN: My Project -> main
+[dry-run] would send: New Blog Post Title -> main
 [dry-run] 2 items would be sent
 ```
 
 **`wachi test` output:**
 
 ```
-Test notification sent to slack://xoxb-.../channel
+Test notification sent to main (slack://xoxb-.../channel)
 ```
 
 **`--verbose` additional output (to stderr):**
@@ -329,7 +333,7 @@ Located via `env-paths` (XDG-compliant): `~/.config/wachi/config.yml` on macOS/L
 
 Config file is created with `0600` permissions (owner read/write only) to protect apprise URLs containing tokens/secrets.
 
-**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new channel and subscription. No commented-out template sections (no `llm`, `summary`, `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
+**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new named channel and subscription. No commented-out template sections (no `llm`, `summary`, `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
 
 **Config writes use atomic write:** Write to `<config path>.tmp`, then `rename()` to the target config path. No lockfile needed. If two concurrent writes race, last one wins (acceptable for CLI).
 
@@ -361,7 +365,8 @@ cleanup:
 
 # Channels and subscriptions
 channels:
-  - apprise_url: "slack://xoxb-token/channel"
+  - name: "main"
+    apprise_url: "slack://xoxb-token/channel"
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
@@ -370,13 +375,16 @@ channels:
         title_selector: ".titleline > a"
         link_selector: ".titleline > a"
 
-  - apprise_url: "discord://webhook-id/webhook-token"
+  - name: "alerts"
+    apprise_url: "discord://webhook-id/webhook-token"
     subscriptions:
       - url: "https://www.youtube.com/@channel"
         rss_url: "https://www.youtube.com/feeds/videos.xml?channel_id=..."
 ```
 
 YAML, JSONC, and JSON config files are supported. wachi looks for `config.yml` first, then `config.jsonc`, then `config.json`.
+
+Each channel entry requires a `name` field. Channel names must be unique (case-insensitive).
 
 Config is validated with zod on every read. Errors use `zod-validation-error` for human-readable messages with exact field paths.
 
@@ -408,8 +416,8 @@ import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core"
 /** Dedup table: tracks all items ever sent to prevent duplicate notifications */
 export const sentItems = sqliteTable("sent_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  dedupHash: text("dedup_hash").notNull().unique(),  // sha256(link + title + channel_url)
-  channelUrl: text("channel_url").notNull(),
+  dedupHash: text("dedup_hash").notNull().unique(),  // sha256(link + title + channel_name)
+  channelUrl: text("channel_url").notNull(),         // stores channel name
   subscriptionUrl: text("subscription_url").notNull(),
   title: text("title"),
   link: text("link"),
@@ -464,7 +472,7 @@ Basic format check only: verify the apprise URL contains `://` (is a URI). Don't
 
 ### 1. RSS Detection & Discovery
 
-When a user runs `wachi sub <apprise-url> <url>`:
+When a user runs `wachi sub -n <name> [-a <apprise-url>] <url>`:
 
 1. If the URL points directly to an RSS/Atom feed (Content-Type contains `xml` or `rss`), use it directly
 2. Otherwise, fetch the HTML page and look for RSS feeds:
@@ -665,7 +673,7 @@ If apprise fails for item #3 out of 10, wachi:
 
 Sends a fixed test message: `wachi test notification -- if you see this, your notification channel is working.`
 
-Verifies the apprise URL works before the user subscribes to anything.
+Verifies a saved channel's apprise URL works (after the channel has been created).
 
 ### Auto-Installation of uv
 
@@ -738,7 +746,7 @@ export const http = ofetch.create({
 
 When `wachi check` runs:
 
-- **Concurrency:** Subscriptions checked concurrently via [p-limit](https://github.com/sindresorhus/p-limit). Default: 10 (configurable via `--concurrency` / `-n`)
+- **Concurrency:** Subscriptions checked concurrently via [p-limit](https://github.com/sindresorhus/p-limit). Default: 10 (configurable via `--concurrency` / `-p`)
 - **Per-domain rate limiting:** Tracked via an in-memory `Map<domain, lastRequestTimestamp>`. Before each request, if less than 1 second has elapsed since the last request to the same domain, `await` the difference. This is separate from p-limit and prevents hammering individual servers
 
 ## Auto-Update
@@ -830,7 +838,7 @@ All zod validation errors are wrapped with `zod-validation-error` for human-read
 | 1-2 | Silent. Log to SQLite health table. Retry on next check |
 | 3 | Notify user: "wachi: subscription <url> has failed 3 consecutive checks. Last error: <error>" |
 | 3+ (CSS type) | Also attempt automatic selector re-identification via agent-browser + LLM |
-| 10+ | Notify user: "wachi: subscription <url> has been failing for 10+ checks. Consider removing it with `wachi unsub`" |
+| 10+ | Notify user: "wachi: subscription <url> has been failing for 10+ checks. Consider removing it with `wachi unsub -n <name>`" |
 
 ### Health Counter Reset
 

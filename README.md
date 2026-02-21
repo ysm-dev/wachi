@@ -35,8 +35,8 @@ brew tap ysm-dev/tap && brew install wachi
 ## Quick Start
 
 ```bash
-# 1. Subscribe to any URL (auto-discovers RSS)
-wachi sub "slack://xoxb-token/channel" "https://blog.example.com"
+# 1. Create a named channel and subscribe a URL (auto-discovers RSS)
+wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
 # 2. Check for new content (run this on a schedule)
 wachi check
@@ -47,7 +47,7 @@ wachi check
 ## How It Works
 
 ```
-wachi sub <apprise-url> <url>
+wachi sub -n <name> [-a <apprise-url>] <url>
       │
       ▼
   Is it RSS? ───yes───▶ Store as RSS subscription
@@ -71,19 +71,20 @@ On `wachi check`, each subscription is fetched and compared against a dedup tabl
 ## Commands
 
 ```
-wachi sub <apprise-url> <url>     Subscribe a URL to a notification channel
+wachi sub -n <name> <url>         Subscribe a URL to a named channel
+  -a, --apprise-url <url>         Required when creating a new channel
   -e, --send-existing             Send all current items on next check (skip baseline)
 
-wachi unsub <apprise-url> [url]   Unsubscribe a URL or remove entire channel
+wachi unsub -n <name> [url]       Unsubscribe a URL or remove entire channel
 
 wachi ls                          List all channels and subscriptions
 
 wachi check                       Check all subscriptions for changes
-  -c, --channel <apprise-url>     Check specific channel only
-  -n, --concurrency <number>      Max concurrent checks (default: 10)
+  -n, --name <name>               Check specific channel only
+  -p, --concurrency <number>      Max concurrent checks (default: 10)
   -d, --dry-run                   Preview without sending or recording
 
-wachi test <apprise-url>          Send a test notification
+wachi test -n <name>              Send a test notification
 
 wachi upgrade                     Update wachi to latest version
 ```
@@ -94,25 +95,28 @@ wachi upgrade                     Update wachi to latest version
 
 ```bash
 # Blog (auto-discovers RSS)
-wachi sub "slack://xoxb-token/channel" "https://blog.example.com"
+wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
 # Hacker News front page (LLM identifies content selectors)
-wachi sub "discord://webhook-id/token" "https://news.ycombinator.com"
+wachi sub -n alerts -a "discord://webhook-id/token" "https://news.ycombinator.com"
+
+# Add another subscription to an existing channel name
+wachi sub -n main "https://example.com/changelog"
 
 # YouTube channel
-wachi sub "tgram://bot-token/chat-id" "https://youtube.com/@channel"
+wachi sub -n media -a "tgram://bot-token/chat-id" "https://youtube.com/@channel"
 
 # URL without https:// (auto-prepended)
-wachi sub "slack://token/channel" "blog.example.com"
+wachi sub -n main "blog.example.com"
 
 # Send all existing items on next check (no baseline)
-wachi sub -e "discord://webhook-id/token" "https://news.ycombinator.com"
+wachi sub -n alerts -e "https://news.ycombinator.com"
 
 # Dry-run: see what would be sent
 wachi check -d
 
 # Check specific channel only
-wachi check -c "slack://xoxb-token/channel"
+wachi check -n main
 
 # Run every 5 minutes with crnd
 crnd "*/5 * * * *" wachi check
@@ -134,10 +138,10 @@ https://blog.example.com/post/new-feature
 New Feature: Faster Builds with Incremental Compilation
 ```
 
-Test your channel before subscribing:
+Test a saved channel anytime:
 
 ```bash
-wachi test "slack://xoxb-token/channel"
+wachi test -n main
 ```
 
 ## Configuration
@@ -161,7 +165,8 @@ summary:
 
 # Channels and subscriptions (managed by wachi sub/unsub)
 channels:
-  - apprise_url: "slack://xoxb-token/channel"
+  - name: "main"
+    apprise_url: "slack://xoxb-token/channel"
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
@@ -170,6 +175,8 @@ channels:
         title_selector: ".titleline > a"
         link_selector: ".titleline > a"
 ```
+
+Each channel entry requires `name`. Names must be unique (case-insensitive).
 
 All fields are optional with sensible defaults. An empty config file is valid.
 

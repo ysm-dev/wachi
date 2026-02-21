@@ -70,6 +70,7 @@ describe("config read/write", () => {
       config: {
         channels: [
           {
+            name: "main",
             apprise_url: "slack://token/channel",
             subscriptions: [
               { url: "https://example.com", rss_url: "https://example.com/feed.xml" },
@@ -96,6 +97,7 @@ describe("config read/write", () => {
       config: {
         channels: [
           {
+            name: "discord",
             apprise_url: "discord://hook/id",
             subscriptions: [
               { url: "https://example.com", rss_url: "https://example.com/feed.xml" },
@@ -122,6 +124,7 @@ describe("config read/write", () => {
       config: {
         channels: [
           {
+            name: "discord-jsonc",
             apprise_url: "discord://hook/jsonc",
             subscriptions: [
               { url: "https://example.com", rss_url: "https://example.com/feed.xml" },
@@ -166,7 +169,9 @@ describe("config read/write", () => {
       await mkdir(configDir, { recursive: true });
       await writeFile(
         jsonPath,
-        JSON.stringify({ channels: [{ apprise_url: "slack://x/y", subscriptions: [] }] }),
+        JSON.stringify({
+          channels: [{ name: "json", apprise_url: "slack://x/y", subscriptions: [] }],
+        }),
         "utf8",
       );
 
@@ -184,7 +189,9 @@ describe("config read/write", () => {
 
       await writeFile(
         jsonPath,
-        JSON.stringify({ channels: [{ apprise_url: "slack://json/path", subscriptions: [] }] }),
+        JSON.stringify({
+          channels: [{ name: "json", apprise_url: "slack://json/path", subscriptions: [] }],
+        }),
         "utf8",
       );
       await writeFile(
@@ -193,6 +200,7 @@ describe("config read/write", () => {
   // this should win over config.json
   "channels": [
     {
+      "name": "jsonc",
       "apprise_url": "slack://jsonc/path",
       "subscriptions": []
     },
@@ -215,7 +223,7 @@ describe("config read/write", () => {
     const configPath = join(dir, "config.yml");
     await writeFile(
       configPath,
-      "channels:\n  - apprise_url: slack://x/y\n    subscriptions:\n      - url: not-a-url\n        rss_url: not-a-url\n",
+      "channels:\n  - name: broken\n    apprise_url: slack://x/y\n    subscriptions:\n      - url: not-a-url\n        rss_url: not-a-url\n",
       "utf8",
     );
 
@@ -276,6 +284,7 @@ describe("config read/write", () => {
         config: {
           channels: [
             {
+              name: "invalid-write",
               apprise_url: "slack://x/y",
               subscriptions: [{ url: "not-a-url", rss_url: "https://example.com/feed.xml" }],
             },

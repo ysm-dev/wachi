@@ -29,7 +29,7 @@ brew tap ysm-dev/tap && brew install wachi
 
 ```bash
 # 1. Subscribe to any URL (auto-discovers RSS)
-wachi sub "slack://xoxb-token/channel" "https://blog.example.com"
+wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
 # 2. Check for new content (run on a schedule)
 wachi check
@@ -40,19 +40,20 @@ wachi check
 ## Commands
 
 ```
-wachi sub <apprise-url> <url>     Subscribe URL to notification channel
+wachi sub -n <name> <url>         Subscribe URL to notification channel
+  -a, --apprise-url <url>         Required when creating a new channel
   -e, --send-existing             Send all current items on next check (skip baseline)
 
-wachi unsub <apprise-url> [url]   Unsubscribe URL or remove entire channel
+wachi unsub -n <name> [url]       Unsubscribe URL or remove entire channel
 
 wachi ls                          List all channels and subscriptions
 
 wachi check                       Check all subscriptions for changes
-  -c, --channel <apprise-url>     Check specific channel only
-  -n, --concurrency <number>      Max concurrent checks (default: 10)
+  -n, --name <name>               Check specific channel only
+  -p, --concurrency <number>      Max concurrent checks (default: 10)
   -d, --dry-run                   Preview without sending or recording
 
-wachi test <apprise-url>          Send test notification
+wachi test -n <name>              Send test notification
 
 wachi upgrade                     Update wachi to latest version
 ```
@@ -85,7 +86,8 @@ summary:
 
 # Channels managed by wachi sub/unsub
 channels:
-  - apprise_url: "slack://xoxb-token/channel"
+  - name: "main"
+    apprise_url: "slack://xoxb-token/channel"
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
@@ -108,16 +110,16 @@ Uses [apprise](https://github.com/caronc/apprise) URL format. Examples:
 
 ```bash
 # Slack
-wachi sub "slack://xoxb-token/channel" "https://example.com"
+wachi sub -n main -a "slack://xoxb-token/channel" "https://example.com"
 
 # Discord
-wachi sub "discord://webhook-id/token" "https://example.com"
+wachi sub -n alerts -a "discord://webhook-id/token" "https://example.com"
 
 # Telegram
-wachi sub "tgram://bot-token/chat-id" "https://example.com"
+wachi sub -n telegram -a "tgram://bot-token/chat-id" "https://example.com"
 
 # Test channel works
-wachi test "slack://xoxb-token/channel"
+wachi test -n main
 ```
 
 Full list: https://github.com/caronc/apprise/wiki
@@ -139,25 +141,25 @@ crontab -e
 
 ```bash
 # Blog (auto-discovers RSS)
-wachi sub "slack://xoxb-token/channel" "https://blog.example.com"
+wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
 # Hacker News (LLM identifies selectors)
-wachi sub "discord://webhook-id/token" "https://news.ycombinator.com"
+wachi sub -n alerts -a "discord://webhook-id/token" "https://news.ycombinator.com"
 
 # YouTube channel
-wachi sub "tgram://bot-token/chat-id" "https://youtube.com/@channel"
+wachi sub -n media -a "tgram://bot-token/chat-id" "https://youtube.com/@channel"
 
 # URL without https:// (auto-prepended)
-wachi sub "slack://token/channel" "blog.example.com"
+wachi sub -n main "blog.example.com"
 
 # Send existing items on next check
-wachi sub -e "discord://webhook-id/token" "https://news.ycombinator.com"
+wachi sub -n alerts -e "https://news.ycombinator.com"
 
 # Dry-run check
 wachi check -d
 
 # Check specific channel
-wachi check -c "slack://xoxb-token/channel"
+wachi check -n main
 ```
 
 For detailed behavior (dedup model, error patterns, notification format, config schema), see [references/spec.md](references/spec.md).

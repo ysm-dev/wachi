@@ -1,11 +1,18 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import Parser from "rss-parser";
 import { parseRssFeed, parseRssItems } from "../../../../src/lib/rss/parse.ts";
 
 const fixturePath = (...parts: string[]): string => {
   return join(process.cwd(), "test", "fixtures", ...parts);
 };
+
+const originalParseString = Parser.prototype.parseString;
+
+afterEach(() => {
+  Parser.prototype.parseString = originalParseString;
+});
 
 describe("parseRssItems", () => {
   it("parses RSS items and sorts oldest first", async () => {
@@ -107,5 +114,79 @@ describe("parseRssItems", () => {
     expect(parsed.title).toBe("Daily Example");
     expect(parsed.imageUrl).toBe("https://example.com/logo-512.png");
     expect(parsed.items).toHaveLength(1);
+  });
+
+  it("extracts itunes image URL when parser returns a plain string", async () => {
+    Parser.prototype.parseString = (async () => {
+      return {
+        title: "Podcast",
+        items: [],
+        "itunes:image": "https://example.com/itunes-string.png",
+      };
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/itunes-string.png");
+  });
+
+  it("extracts itunes image URL from direct href object", async () => {
+    Parser.prototype.parseString = (async () => {
+      return {
+        title: "Podcast",
+        items: [],
+        "itunes:image": { href: "https://example.com/itunes-href.png" },
+      };
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/itunes-href.png");
+  });
+
+  it("extracts itunes image URL from nested XML attribute object", async () => {
+    Parser.prototype.parseString = (async () => {
+      return {
+        title: "Podcast",
+        items: [],
+        "itunes:image": { $: { href: "https://example.com/itunes-xml-attr.png" } },
+      };
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/itunes-xml-attr.png");
+  });
+
+  it("extracts nested itunes.image string metadata", async () => {
+    Parser.prototype.parseString = (async () => {
+      return {
+        title: "Podcast",
+        items: [],
+        itunes: {
+          image: "https://example.com/nested-itunes.png",
+        },
+      };
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/nested-itunes.png");
+  });
+
+  it("returns null image metadata when parser feed value is a function object", async () => {
+    Parser.prototype.parseString = (async () => {
+      const feed = Object.assign(() => undefined, {
+        title: "Function Feed",
+        items: [],
+      });
+      return feed;
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.title).toBe("Function Feed");
+    expect(parsed.imageUrl).toBeNull();
+    expect(parsed.items).toEqual([]);
   });
 });

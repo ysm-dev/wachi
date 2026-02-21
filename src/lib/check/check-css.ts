@@ -9,7 +9,7 @@ import { type CheckStats, handleSubscriptionItems } from "./handle-items.ts";
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const checkCssOptionsSchema = z.object({
-  channelUrl: z.string(),
+  channelName: z.string(),
   effectiveChannelUrl: z.string(),
   subscription: z.custom<CssSubscriptionConfig>(),
   db: z.custom<WachiDb>(),
@@ -24,7 +24,7 @@ const checkCssOptionsSchema = z.object({
 type CheckCssOptions = z.infer<typeof checkCssOptionsSchema>;
 
 export const checkCssSubscription = async ({
-  channelUrl,
+  channelName,
   effectiveChannelUrl,
   subscription,
   db,
@@ -46,7 +46,7 @@ export const checkCssSubscription = async ({
 
   await handleSubscriptionItems({
     items: fetched.items,
-    channelUrl,
+    channelName,
     effectiveChannelUrl,
     subscriptionUrl: subscription.url,
     db,
@@ -59,5 +59,5 @@ export const checkCssSubscription = async ({
     sourceIdentity: fetched.sourceIdentity,
   });
 
-  markHealthSuccess(db, channelUrl, subscription.url);
+  markHealthSuccess(db, channelName, subscription.url);
 };

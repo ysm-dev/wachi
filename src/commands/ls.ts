@@ -54,7 +54,7 @@ export const lsCommand = defineCommand({
       }
 
       for (const channel of configState.config.channels) {
-        printStdout(maskAppriseUrl(channel.apprise_url));
+        printStdout(`${channel.name} (${maskAppriseUrl(channel.apprise_url)})`);
 
         for (const subscription of channel.subscriptions) {
           const type = isRssSubscription(subscription)
@@ -63,7 +63,7 @@ export const lsCommand = defineCommand({
               ? "CSS"
               : "Unknown";
 
-          const failureKey = `${channel.apprise_url}::${subscription.url}`;
+          const failureKey = `${channel.name}::${subscription.url}`;
           const failures = failuresByKey.get(failureKey) ?? 0;
           const healthSuffix = failures > 0 ? ` [${failures} failures]` : "";
           printStdout(`  ${subscription.url} (${type})${healthSuffix}`);

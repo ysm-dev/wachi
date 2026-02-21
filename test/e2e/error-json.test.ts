@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -35,7 +35,17 @@ describe("wachi CLI JSON/error behavior", () => {
     const configPath = join(dir, "config.yml");
 
     const result = await runCli(
-      ["sub", "--json", "invalid-apprise-url", "https://example.com", "--config", configPath],
+      [
+        "sub",
+        "--json",
+        "-n",
+        "main",
+        "-a",
+        "invalid-apprise-url",
+        "https://example.com",
+        "--config",
+        configPath,
+      ],
       { WACHI_NO_AUTO_UPDATE: "1" },
     );
 
@@ -44,6 +54,57 @@ describe("wachi CLI JSON/error behavior", () => {
     expect(payload.ok).toBe(false);
     expect(payload.error.what).toContain("Invalid apprise URL");
     expect(typeof payload.error.fix).toBe("string");
+  });
+
+  it("returns JSON error when channel does not exist and --apprise-url is missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-missing-channel-url-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+
+    const result = await runCli(
+      ["sub", "--json", "-n", "main", "https://example.com", "--config", configPath],
+      { WACHI_NO_AUTO_UPDATE: "1" },
+    );
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.what).toContain("Channel not found");
+  });
+
+  it("returns JSON error when --apprise-url mismatches existing channel", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-channel-mismatch-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    await writeFile(
+      configPath,
+      `channels:
+  - name: "main"
+    apprise_url: "slack://token/channel"
+    subscriptions: []
+`,
+      "utf8",
+    );
+
+    const result = await runCli(
+      [
+        "sub",
+        "--json",
+        "-n",
+        "main",
+        "-a",
+        "discord://webhook-id/token",
+        "https://example.com",
+        "--config",
+        configPath,
+      ],
+      { WACHI_NO_AUTO_UPDATE: "1" },
+    );
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.what).toContain("already exists with a different apprise URL");
   });
 
   it("falls back to default concurrency when an invalid number is passed", async () => {
@@ -70,10 +131,9 @@ describe("wachi CLI JSON/error behavior", () => {
     testDirs.push(dir);
     const configPath = join(dir, "config.yml");
 
-    const result = await runCli(
-      ["unsub", "--json", "slack://token/channel", "--config", configPath],
-      { WACHI_NO_AUTO_UPDATE: "1" },
-    );
+    const result = await runCli(["unsub", "--json", "-n", "missing", "--config", configPath], {
+      WACHI_NO_AUTO_UPDATE: "1",
+    });
 
     expect(result.exitCode).toBe(0);
     const payload = JSON.parse(result.stdout);

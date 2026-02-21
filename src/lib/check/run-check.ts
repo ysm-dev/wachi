@@ -2,6 +2,7 @@ import pLimit from "p-limit";
 import { z } from "zod";
 import { getEnv } from "../../utils/env.ts";
 import { printJsonSuccess, printStderr, printStdout } from "../cli/io.ts";
+import { toChannelNameKey } from "../config/channel-name-key.ts";
 import { readConfig } from "../config/read.ts";
 import { writeConfig } from "../config/write.ts";
 import { cleanupSentItems } from "../db/cleanup-sent-items.ts";
@@ -11,7 +12,7 @@ import type { CheckStats } from "./handle-items.ts";
 import { processSubscriptionCheck } from "./process-subscription.ts";
 
 const runCheckOptionsSchema = z.object({
-  channel: z.string().optional(),
+  name: z.string().optional(),
   concurrency: z.number(),
   dryRun: z.boolean(),
   isJson: z.boolean(),
@@ -63,7 +64,7 @@ const resolveExitCode = (stats: CheckStats): number => {
 };
 
 export const runCheck = async ({
-  channel,
+  name,
   concurrency,
   dryRun,
   isJson,
@@ -86,8 +87,10 @@ export const runCheck = async ({
       configState.config.cleanup.max_records,
     );
 
-    const channels = channel
-      ? configState.config.channels.filter((entry) => entry.apprise_url === channel)
+    const channels = name
+      ? configState.config.channels.filter(
+          (entry) => toChannelNameKey(entry.name) === toChannelNameKey(name),
+        )
       : configState.config.channels;
 
     const stats: CheckStats = { sent: [], skipped: 0, errors: [] };
@@ -103,7 +106,7 @@ export const runCheck = async ({
           limit(async () => {
             const effectiveChannelUrl = env.appriseUrlOverride ?? channelEntry.apprise_url;
             await processSubscriptionCheck({
-              channelUrl: channelEntry.apprise_url,
+              channelName: channelEntry.name,
               effectiveChannelUrl,
               subscription,
               db,

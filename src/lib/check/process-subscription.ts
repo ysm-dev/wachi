@@ -15,7 +15,7 @@ import type { CheckStats } from "./handle-items.ts";
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const processSubscriptionOptionsSchema = z.object({
-  channelUrl: z.string(),
+  channelName: z.string(),
   effectiveChannelUrl: z.string(),
   subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
@@ -32,7 +32,7 @@ const processSubscriptionOptionsSchema = z.object({
 type ProcessSubscriptionOptions = z.infer<typeof processSubscriptionOptionsSchema>;
 
 export const processSubscriptionCheck = async ({
-  channelUrl,
+  channelName,
   effectiveChannelUrl,
   subscription,
   db,
@@ -48,7 +48,7 @@ export const processSubscriptionCheck = async ({
   try {
     if (isRssSubscription(subscription)) {
       await checkRssSubscription({
-        channelUrl,
+        channelName,
         effectiveChannelUrl,
         subscription,
         db,
@@ -67,7 +67,7 @@ export const processSubscriptionCheck = async ({
     }
 
     await checkCssSubscription({
-      channelUrl,
+      channelName,
       effectiveChannelUrl,
       subscription,
       db,
@@ -80,7 +80,7 @@ export const processSubscriptionCheck = async ({
     });
   } catch (error) {
     await handleSubscriptionFailure({
-      channelUrl,
+      channelName,
       effectiveChannelUrl,
       subscription,
       db,

@@ -51,6 +51,21 @@ const feedWithoutTitleXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
+const feedWithInvalidImageXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Feed With Bad Image</title>
+    <image>
+      <url>http://[invalid</url>
+    </image>
+    <item>
+      <title>One</title>
+      <link>/one</link>
+      <guid>/one</guid>
+    </item>
+  </channel>
+</rss>`;
+
 describe("fetchRssSubscriptionItems integration", () => {
   it("stores ETag and returns notModified on conditional 304", async () => {
     const etag = '"abc-123"';
@@ -237,5 +252,98 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(result.notModified).toBe(false);
     expect(result.sourceIdentity?.username).toBe("Website Title");
     expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
+  });
+
+  it("falls back to URL-derived identity when website fetch returns >= 400", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          return new Response("blocked", { status: 500 });
+        }
+        if (url.pathname === "/feed.xml") {
+          return new Response(feedWithoutTitleXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+    });
+
+    expect(result.sourceIdentity?.username).toBe("127.0.0.1");
+    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/favicon.ico`);
+  });
+
+  it("falls back safely when website branding fetch throws", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(feedWithoutTitleXml, {
+          headers: { "content-type": "application/rss+xml" },
+        });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl: "not-a-url",
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+    });
+
+    expect(result.sourceIdentity?.username).toBeUndefined();
+    expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
+  });
+
+  it("falls back to favicon derivation when feed image URL is invalid", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(feedWithInvalidImageXml, {
+          headers: { "content-type": "application/rss+xml" },
+        });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+    });
+
+    expect(result.sourceIdentity?.username).toBe("Feed With Bad Image");
+    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/favicon.ico`);
   });
 });

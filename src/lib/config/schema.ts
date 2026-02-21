@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toChannelNameKey } from "./channel-name-key.ts";
 
 export const llmConfigSchema = z.object({
   base_url: z.string().url().default("https://api.openai.com/v1"),
@@ -33,15 +34,34 @@ export const cssSubscriptionSchema = z.object({
 export const subscriptionSchema = z.union([rssSubscriptionSchema, cssSubscriptionSchema]);
 
 export const channelSchema = z.object({
+  name: z.string().trim().min(1),
   apprise_url: z.string().min(1),
   subscriptions: z.array(subscriptionSchema).default([]),
+});
+
+const channelsSchema = z.array(channelSchema).superRefine((channels, context) => {
+  const seen = new Set<string>();
+
+  for (const [index, channel] of channels.entries()) {
+    const key = toChannelNameKey(channel.name);
+    if (seen.has(key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Channel names must be unique (case-insensitive).",
+        path: [index, "name"],
+      });
+      continue;
+    }
+
+    seen.add(key);
+  }
 });
 
 export const userConfigSchema = z.object({
   llm: llmConfigSchema.partial().optional(),
   summary: summaryConfigSchema.partial().optional(),
   cleanup: cleanupConfigSchema.partial().optional(),
-  channels: z.array(channelSchema).optional(),
+  channels: channelsSchema.optional(),
 });
 
 const llmDefaultsSchema = llmConfigSchema.extend({
@@ -58,7 +78,7 @@ export const resolvedConfigSchema = z.object({
     min_reading_time: 0,
   }),
   cleanup: cleanupConfigSchema.default({ ttl_days: 90, max_records: 50_000 }),
-  channels: z.array(channelSchema).default([]),
+  channels: channelsSchema.default([]),
 });
 
 export type UserConfig = z.infer<typeof userConfigSchema>;
