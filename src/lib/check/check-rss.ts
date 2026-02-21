@@ -8,7 +8,7 @@ import { type CheckStats, handleSubscriptionItems } from "./handle-items.ts";
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const checkRssOptionsSchema = z.object({
-  channelUrl: z.string(),
+  channelName: z.string(),
   effectiveChannelUrl: z.string(),
   subscription: z.custom<RssSubscriptionConfig>(),
   db: z.custom<WachiDb>(),
@@ -23,7 +23,7 @@ const checkRssOptionsSchema = z.object({
 type CheckRssOptions = z.infer<typeof checkRssOptionsSchema>;
 
 export const checkRssSubscription = async ({
-  channelUrl,
+  channelName,
   effectiveChannelUrl,
   subscription,
   db,
@@ -42,13 +42,13 @@ export const checkRssSubscription = async ({
   });
 
   if (fetched.notModified) {
-    markHealthSuccess(db, channelUrl, subscription.url);
+    markHealthSuccess(db, channelName, subscription.url);
     return;
   }
 
   await handleSubscriptionItems({
     items: fetched.items,
-    channelUrl,
+    channelName,
     effectiveChannelUrl,
     subscriptionUrl: subscription.url,
     db,
@@ -61,5 +61,5 @@ export const checkRssSubscription = async ({
     sourceIdentity: fetched.sourceIdentity,
   });
 
-  markHealthSuccess(db, channelUrl, subscription.url);
+  markHealthSuccess(db, channelName, subscription.url);
 };

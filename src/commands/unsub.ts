@@ -1,10 +1,10 @@
 import { defineCommand } from "citty";
 import { z } from "zod";
-import { maskAppriseUrl, printJsonSuccess, printStdout } from "../lib/cli/io.ts";
+import { printJsonSuccess, printStdout } from "../lib/cli/io.ts";
+import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
 import { readConfig } from "../lib/config/read.ts";
 import { writeConfig } from "../lib/config/write.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
-import { validateAppriseUrl } from "../lib/url/validate.ts";
 import {
   commandJson,
   globalArgDefinitions,
@@ -13,7 +13,7 @@ import {
 } from "./shared.ts";
 
 const unsubArgsSchema = z.object({
-  appriseUrl: z.string().min(1),
+  name: z.string().trim().min(1),
   url: z.string().optional(),
   json: z.boolean().optional(),
   verbose: z.boolean().optional(),
@@ -23,14 +23,15 @@ const unsubArgsSchema = z.object({
 export const unsubCommand = defineCommand({
   meta: {
     name: "unsub",
-    description: "Unsubscribe a URL from a channel or remove an entire channel",
+    description: "Unsubscribe a URL from a named channel or remove an entire channel",
   },
   args: {
     ...globalArgDefinitions,
-    appriseUrl: {
-      type: "positional",
+    name: {
+      type: "string",
+      alias: "n",
       required: true,
-      description: "Apprise URL",
+      description: "Channel name",
     },
     url: {
       type: "positional",
@@ -41,20 +42,21 @@ export const unsubCommand = defineCommand({
   run: async ({ args }) => {
     await runWithErrorHandling(args, async () => {
       const parsedArgs = parseCommandArgs(unsubArgsSchema, args);
-      validateAppriseUrl(parsedArgs.appriseUrl);
+      const channelName = parsedArgs.name.trim();
+      const channelNameKey = toChannelNameKey(channelName);
 
       const configState = await readConfig(parsedArgs.config);
       const nextRaw = structuredClone(configState.rawConfig);
       const channels = nextRaw.channels ?? [];
 
       const channelIndex = channels.findIndex(
-        (channel) => channel.apprise_url === parsedArgs.appriseUrl,
+        (channel) => toChannelNameKey(channel.name) === channelNameKey,
       );
       if (channelIndex === -1) {
         if (commandJson(parsedArgs)) {
           printJsonSuccess({ removed: 0 });
         } else {
-          printStdout(`Channel not found: ${maskAppriseUrl(parsedArgs.appriseUrl)}`);
+          printStdout(`Channel not found: ${channelName}`);
         }
         return 0;
       }
@@ -73,9 +75,7 @@ export const unsubCommand = defineCommand({
         if (commandJson(parsedArgs)) {
           printJsonSuccess({ removed_channel: true, removed_subscriptions: removedCount });
         } else {
-          printStdout(
-            `Removed channel ${maskAppriseUrl(parsedArgs.appriseUrl)} (${removedCount} subscriptions)`,
-          );
+          printStdout(`Removed channel ${channel.name} (${removedCount} subscriptions)`);
         }
         return 0;
       }
@@ -97,7 +97,7 @@ export const unsubCommand = defineCommand({
       if (commandJson(parsedArgs)) {
         printJsonSuccess({ removed });
       } else if (removed > 0) {
-        printStdout(`Removed: ${normalized} from ${maskAppriseUrl(parsedArgs.appriseUrl)}`);
+        printStdout(`Removed: ${normalized} from ${channel.name}`);
       } else {
         printStdout(`Subscription not found: ${normalized}`);
       }

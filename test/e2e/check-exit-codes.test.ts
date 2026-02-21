@@ -42,7 +42,8 @@ afterEach(async () => {
 const writeConfig = async (path: string, okUrl: string, failUrl?: string): Promise<void> => {
   const failSub = failUrl ? `\n      - url: "${failUrl}"\n        rss_url: "${failUrl}"` : "";
   const text = `channels:
-  - apprise_url: "slack://token/channel"
+  - name: "main"
+    apprise_url: "slack://token/channel"
     subscriptions:
       - url: "${okUrl}"
         rss_url: "${okUrl}"${failSub}
@@ -139,11 +140,13 @@ describe("wachi check exit code matrix", () => {
     await writeFile(
       configPath,
       `channels:
-  - apprise_url: "slack://token/good"
+  - name: "good"
+    apprise_url: "slack://token/good"
     subscriptions:
       - url: "${okUrl}"
         rss_url: "${okUrl}"
-  - apprise_url: "slack://token/bad"
+  - name: "bad"
+    apprise_url: "slack://token/bad"
     subscriptions:
       - url: "${failUrl}"
         rss_url: "${failUrl}"
@@ -152,7 +155,7 @@ describe("wachi check exit code matrix", () => {
     );
 
     const result = await runCli(
-      ["check", "--json", "--dry-run", "--channel", "slack://token/good", "--config", configPath],
+      ["check", "--json", "--dry-run", "--name", "good", "--config", configPath],
       {
         WACHI_DB_PATH: dbPath,
         WACHI_NO_AUTO_UPDATE: "1",

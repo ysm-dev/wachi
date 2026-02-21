@@ -49,7 +49,7 @@ export const sendNotification = async ({
     throw new WachiError(
       `Failed to send notification to ${appriseUrl}`,
       stderr.trim() || "uvx apprise exited with an error.",
-      "Verify the apprise URL with `wachi test <apprise-url>`.",
+      "Verify the channel with `wachi test -n <name>`.",
     );
   }
 };

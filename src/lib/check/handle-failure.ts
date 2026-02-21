@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { toChannelNameKey } from "../config/channel-name-key.ts";
 import {
   isCssSubscription,
   type ResolvedConfig,
@@ -16,7 +17,7 @@ import type { CheckStats } from "./handle-items.ts";
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const handleFailureOptionsSchema = z.object({
-  channelUrl: z.string(),
+  channelName: z.string(),
   effectiveChannelUrl: z.string(),
   subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
@@ -33,11 +34,13 @@ type HandleFailureOptions = z.infer<typeof handleFailureOptionsSchema>;
 
 const updateRecoveredCssSelectors = (
   rawConfig: UserConfig,
-  channelUrl: string,
+  channelName: string,
   subscriptionUrl: string,
   selectors: CssSelectors,
 ): boolean => {
-  const channel = rawConfig.channels?.find((entry) => entry.apprise_url === channelUrl);
+  const channel = rawConfig.channels?.find(
+    (entry) => toChannelNameKey(entry.name) === toChannelNameKey(channelName),
+  );
   const subscription = channel?.subscriptions.find((entry) => entry.url === subscriptionUrl);
   if (!subscription || !isCssSubscription(subscription)) {
     return false;
@@ -53,6 +56,7 @@ const maybeSendFailureAlert = async (
   failures: number,
   subscriptionUrl: string,
   message: string,
+  channelName: string,
   effectiveChannelUrl: string,
   dryRun: boolean,
   enqueueForChannel: QueueFn,
@@ -63,7 +67,7 @@ const maybeSendFailureAlert = async (
 
   const body =
     failures >= 10
-      ? `wachi: subscription ${subscriptionUrl} has been failing for 10+ checks. Consider removing it with wachi unsub.`
+      ? `wachi: subscription ${subscriptionUrl} has been failing for 10+ checks. Consider removing it with wachi unsub -n "${channelName}".`
       : `wachi: subscription ${subscriptionUrl} has failed 3 consecutive checks. Last error: ${message}`;
 
   try {
@@ -76,7 +80,7 @@ const maybeSendFailureAlert = async (
 };
 
 export const handleSubscriptionFailure = async ({
-  channelUrl,
+  channelName,
   effectiveChannelUrl,
   subscription,
   db,
@@ -89,20 +93,20 @@ export const handleSubscriptionFailure = async ({
   error,
 }: HandleFailureOptions): Promise<void> => {
   const message = error instanceof Error ? error.message : "check failed";
-  const health = markHealthFailure(db, channelUrl, subscription.url, message);
+  const health = markHealthFailure(db, channelName, subscription.url, message);
 
   if (isCssSubscription(subscription) && health.consecutiveFailures >= 3 && !dryRun) {
     try {
       const identified = await identifyCssSelectors(subscription.url, config);
       const updated = updateRecoveredCssSelectors(
         rawConfig,
-        channelUrl,
+        channelName,
         subscription.url,
         identified.selectors,
       );
       if (updated) {
         onConfigMutated();
-        markHealthSuccess(db, channelUrl, subscription.url);
+        markHealthSuccess(db, channelName, subscription.url);
       }
     } catch (recoveryError) {
       stats.errors.push(
@@ -115,6 +119,7 @@ export const handleSubscriptionFailure = async ({
     health.consecutiveFailures,
     subscription.url,
     message,
+    channelName,
     effectiveChannelUrl,
     dryRun,
     enqueueForChannel,

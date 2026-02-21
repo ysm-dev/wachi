@@ -1,7 +1,6 @@
 import { defineCommand } from "citty";
 import { z } from "zod";
 import { runCheck } from "../lib/check/run-check.ts";
-import { validateAppriseUrl } from "../lib/url/validate.ts";
 import {
   commandJson,
   commandVerbose,
@@ -11,7 +10,7 @@ import {
 } from "./shared.ts";
 
 const checkArgsSchema = z.object({
-  channel: z.string().optional(),
+  name: z.string().trim().min(1).optional(),
   concurrency: z.union([z.string(), z.number()]).optional(),
   "dry-run": z.boolean().optional(),
   dryRun: z.boolean().optional(),
@@ -35,10 +34,15 @@ export const checkCommand = defineCommand({
   },
   args: {
     ...globalArgDefinitions,
-    channel: { type: "string", alias: "c", required: false, description: "Check only one channel" },
-    concurrency: {
+    name: {
       type: "string",
       alias: "n",
+      required: false,
+      description: "Check only one channel name",
+    },
+    concurrency: {
+      type: "string",
+      alias: "p",
       required: false,
       default: "10",
       description: "Max concurrent checks",
@@ -54,12 +58,9 @@ export const checkCommand = defineCommand({
     await runWithErrorHandling(args, async () => {
       const parsedArgs = parseCommandArgs(checkArgsSchema, args);
       const dryRun = parsedArgs["dry-run"] === true || parsedArgs.dryRun === true;
-      if (parsedArgs.channel) {
-        validateAppriseUrl(parsedArgs.channel);
-      }
 
       return runCheck({
-        channel: parsedArgs.channel,
+        name: parsedArgs.name,
         concurrency: resolveConcurrency(parsedArgs.concurrency),
         dryRun,
         isJson: commandJson(parsedArgs),
