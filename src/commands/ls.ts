@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { z } from "zod";
 import { maskAppriseUrl, printJsonSuccess, printStdout } from "../lib/cli/io.ts";
 import { readConfig } from "../lib/config/read.ts";
-import { isCssSubscription, isRssSubscription } from "../lib/config/schema.ts";
+
 import { connectDb } from "../lib/db/connect.ts";
 import { listHealthStates } from "../lib/db/list-health-states.ts";
 import {
@@ -57,11 +57,7 @@ export const lsCommand = defineCommand({
         printStdout(`${channel.name} (${maskAppriseUrl(channel.apprise_url)})`);
 
         for (const subscription of channel.subscriptions) {
-          const type = isRssSubscription(subscription)
-            ? "RSS"
-            : isCssSubscription(subscription)
-              ? "CSS"
-              : "Unknown";
+          const type = "RSS";
 
           const failureKey = `${channel.name}::${subscription.url}`;
           const failures = failuresByKey.get(failureKey) ?? 0;

@@ -6,9 +6,4 @@ describe("formatNotificationBody", () => {
     const body = formatNotificationBody("https://example.com", "New Post");
     expect(body).toBe("https://example.com\n\nNew Post");
   });
-
-  it("appends summary when present", () => {
-    const body = formatNotificationBody("https://example.com", "New Post", "Short summary");
-    expect(body).toBe("https://example.com\n\nNew Post\n\nShort summary");
-  });
 });

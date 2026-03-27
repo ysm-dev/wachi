@@ -3,11 +3,7 @@ import { z } from "zod";
 import { printJsonSuccess, printStderr, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
 import { readConfig } from "../lib/config/read.ts";
-import {
-  isCssSubscription,
-  isRssSubscription,
-  type SubscriptionConfig,
-} from "../lib/config/schema.ts";
+import type { SubscriptionConfig } from "../lib/config/schema.ts";
 import { writeConfig } from "../lib/config/write.ts";
 import { connectDb } from "../lib/db/connect.ts";
 import { seedDedupRecords } from "../lib/db/seed-dedup-records.ts";
@@ -43,7 +39,7 @@ const findExistingSubscription = (
     if (subscription.url === normalizedUrl) {
       return true;
     }
-    return isRssSubscription(subscription) && subscription.rss_url === normalizedUrl;
+    return subscription.rss_url === normalizedUrl;
   });
 };
 
@@ -135,9 +131,9 @@ export const subCommand = defineCommand({
         if (isJson) {
           printJsonSuccess({
             channel: channelIdentity,
-            type: isCssSubscription(existingSubscription) ? "css" : "rss",
+            type: "rss",
             url: existingSubscription.url,
-            rss_url: isRssSubscription(existingSubscription) ? existingSubscription.rss_url : null,
+            rss_url: existingSubscription.rss_url,
             baseline_count: 0,
           });
         } else {
@@ -146,7 +142,7 @@ export const subCommand = defineCommand({
         return 0;
       }
 
-      const prepared = await prepareSubscription(normalized.url, configState.config);
+      const prepared = await prepareSubscription(normalized.url);
       const nextRawConfig = structuredClone(configState.rawConfig);
       if (!nextRawConfig.channels) {
         nextRawConfig.channels = [];
@@ -191,18 +187,13 @@ export const subCommand = defineCommand({
           channel: channelIdentity,
           type: prepared.subscriptionType,
           url: prepared.subscription.url,
-          rss_url: isRssSubscription(prepared.subscription) ? prepared.subscription.rss_url : null,
+          rss_url: prepared.subscription.rss_url,
           baseline_count: sendExisting ? 0 : baselineCount,
         });
-      } else if (isRssSubscription(prepared.subscription)) {
+      } else {
         printStdout(`Channel: ${channelIdentity}`);
         printStdout(`Subscribed (RSS): ${prepared.subscription.url}`);
         printStdout(`Feed: ${prepared.subscription.rss_url}`);
-        printStdout(`Baseline: ${sendExisting ? 0 : baselineCount} items seeded`);
-      } else if (isCssSubscription(prepared.subscription)) {
-        printStdout(`Channel: ${channelIdentity}`);
-        printStdout(`Subscribed (CSS): ${prepared.subscription.url}`);
-        printStdout(`Selector: ${prepared.subscription.item_selector}`);
         printStdout(`Baseline: ${sendExisting ? 0 : baselineCount} items seeded`);
       }
 

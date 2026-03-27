@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ResolvedConfig, RssSubscriptionConfig } from "../config/schema.ts";
+import type { SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { markHealthSuccess } from "../db/mark-health-success.ts";
 import { fetchRssSubscriptionItems } from "../subscriptions/fetch-rss-subscription-items.ts";
@@ -10,12 +10,11 @@ type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 const checkRssOptionsSchema = z.object({
   channelName: z.string(),
   effectiveChannelUrl: z.string(),
-  subscription: z.custom<RssSubscriptionConfig>(),
+  subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
   dryRun: z.boolean(),
   isJson: z.boolean(),
   isVerbose: z.boolean(),
-  config: z.custom<ResolvedConfig>(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: z.custom<QueueFn>(),
 });
@@ -30,7 +29,6 @@ export const checkRssSubscription = async ({
   dryRun,
   isJson,
   isVerbose,
-  config,
   stats,
   enqueueForChannel,
 }: CheckRssOptions): Promise<void> => {
@@ -55,7 +53,6 @@ export const checkRssSubscription = async ({
     dryRun,
     isJson,
     isVerbose,
-    config,
     stats,
     enqueueForChannel,
     sourceIdentity: fetched.sourceIdentity,

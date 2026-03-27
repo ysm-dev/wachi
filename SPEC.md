@@ -9,7 +9,7 @@
 
 ## Overview
 
-wachi is a stateless CLI tool that monitors URLs for changes and delivers notifications via [apprise](https://github.com/caronc/apprise). It auto-discovers RSS feeds when available, and uses LLM-powered CSS selector identification (via accessibility tree analysis) for non-RSS sites.
+wachi is a stateless CLI tool that monitors RSS feeds for changes and delivers notifications via [apprise](https://github.com/caronc/apprise). It auto-discovers RSS feeds from any URL.
 
 **Tagline:** Subscribe any link and get notified on change.
 
@@ -35,25 +35,7 @@ wachi sub -n <name> [-a <apprise-url>] <url>
   RSS found? ------yes-----> Store original URL + discovered RSS URL
        |no
        v
-  Validate LLM config exists (error if missing)
-       |
-  Auto-install agent-browser if missing (with progress message)
-       |
-  Launch agent-browser (one-time)
-       |
-  Step 1: Get a11y tree via ariaSnapshot()
-       |
-  Step 2: LLM identifies which refs are the main list items
-       |
-  Step 3: Get HTML of identified elements via agent-browser
-       |
-  Step 4: Derive CSS selectors from the DOM structure
-       |
-  Step 5: Validate selectors against raw HTTP HTML (mismatch detection)
-       |
-  Store URL + CSS selectors + baseline items (dedup seed)
-       |
-  agent-browser close
+  Error: No RSS feed found for this URL
 ```
 
 ### Ongoing checks (`wachi check`)
@@ -64,8 +46,7 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 3. For each subscription (concurrent via p-limit, rate-limited per domain):
    (if --name is set, only subscriptions for that channel are checked)
      |
-     RSS? --> Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Extract items
-     CSS? --> HTTP fetch --> Apply selector with cheerio --> Extract items
+     Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Extract items
      |
      For each item:
        Resolve relative URLs against subscription URL
@@ -103,7 +84,7 @@ cleanup:
 
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
-| Language | TypeScript | Playwright/AI SDK ecosystem, agent-browser compatibility |
+| Language | TypeScript | Fast startup, type safety, rich ecosystem |
 | Type checker | tsgo (`@typescript/native-preview`) | 10x faster type checking than tsc |
 | Runtime | Bun | bun:sqlite built-in, fast startup, `bun build --compile` for binary distribution |
 | Linter/Formatter | Biome v2 | Single tool for linting + formatting, fast, zero config |
@@ -115,11 +96,6 @@ cleanup:
 | HTTP client | ofetch (unjs/ofetch) | Built-in retry, timeout, interceptors. unjs ecosystem |
 | Concurrency | p-limit | Simple concurrency limiter for parallel checks |
 | RSS parsing | rss-parser | Most popular Node RSS parser, handles RSS 2.0 + Atom |
-| HTML parsing | cheerio | Lightweight DOM parser for applying saved CSS selectors on ongoing checks |
-| HTML to markdown | turndown | Convert HTML articles to markdown for LLM summarization |
-| Reading time | reading-time | Estimate article reading time (for conditional summarization) |
-| A11y tree | agent-browser | Playwright's ariaSnapshot() via agent-browser CLI subprocess |
-| LLM | Vercel AI SDK v6 | `generateText` + `Output.object()` with Zod schema. OpenAI-compatible providers |
 | Notifications | apprise (via uvx) | 90+ notification services, zero code needed |
 | Config | YAML (default) + JSON | Human-readable, editable. Uses `yaml` package (round-trip to preserve comments) |
 | Path resolution | env-paths | XDG-compliant paths for data, config, cache across platforms |
@@ -203,7 +179,7 @@ Command-specific `data` shapes:
 
 - `wachi ls --json`: `{"channels": [{"name": "...", "apprise_url": "...", "subscriptions": [...]}]}`
 - `wachi check --json`: `{"sent": [{"title": "...", "link": "...", "channel_name": "main"}], "skipped": 47, "errors": [...]}`
-- `wachi sub --json`: `{"channel": "main", "type": "rss", "url": "...", "rss_url": "...", "baseline_count": 42}`
+- `wachi sub --json`: `{"channel": "main", "url": "...", "rss_url": "...", "baseline_count": 42}`
 - `wachi test --json`: `{"sent": true}`
 
 ### Examples
@@ -251,15 +227,6 @@ Feed: https://blog.example.com/feed.xml
 Baseline: 42 items seeded
 ```
 
-or for CSS:
-
-```
-Channel: alerts
-Subscribed (CSS): https://news.ycombinator.com
-Selector: tr.athing
-Baseline: 30 items seeded
-```
-
 **`wachi sub` idempotent (already exists):**
 
 ```
@@ -285,7 +252,6 @@ Removed channel main (3 subscriptions)
 ```
 main (slack://xoxb-.../channel)
   https://blog.example.com (RSS)
-  https://news.ycombinator.com (CSS) [3 failures]
 
 alerts (discord://webhook-id/token)
   https://youtube.com/@channel (RSS)
@@ -333,31 +299,15 @@ Located via `env-paths` (XDG-compliant): `~/.config/wachi/config.yml` on macOS/L
 
 Config file is created with `0600` permissions (owner read/write only) to protect apprise URLs containing tokens/secrets.
 
-**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new named channel and subscription. No commented-out template sections (no `llm`, `summary`, `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
+**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new named channel and subscription. No commented-out template sections (no `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
 
 **Config writes use atomic write:** Write to `<config path>.tmp`, then `rename()` to the target config path. No lockfile needed. If two concurrent writes race, last one wins (acceptable for CLI).
 
 **YAML comment preservation:** Uses `yaml` package's `parseDocument()` + `toString()` for round-trip parsing that preserves user comments, blank lines, and formatting.
 
-Subscription type is inferred from fields (no explicit `type` field):
-- Has `rss_url` field -> RSS subscription
-- Has `item_selector` field -> CSS subscription
+All subscriptions are RSS-based. Each subscription has a `url` (the original URL) and an `rss_url` (the discovered feed URL).
 
 ```yaml
-# LLM configuration (required for non-RSS subscriptions)
-# Can also be set via WACHI_LLM_BASE_URL, WACHI_LLM_API_KEY, WACHI_LLM_MODEL
-llm:
-  base_url: "https://api.openai.com/v1"   # default: https://api.openai.com/v1
-  api_key: "sk-..."
-  model: "gpt-4.1-mini"
-
-# Global summary settings (applies to ALL channels)
-summary:
-  enabled: true
-  prompt: "Summarize this article focusing on key technical decisions"
-  language: "en"
-  min_reading_time: 3
-
 # Dedup cleanup settings
 cleanup:
   ttl_days: 90
@@ -370,10 +320,6 @@ channels:
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
-      - url: "https://news.ycombinator.com"
-        item_selector: "tr.athing"
-        title_selector: ".titleline > a"
-        link_selector: ".titleline > a"
 
   - name: "alerts"
     apprise_url: "discord://webhook-id/webhook-token"
@@ -392,9 +338,7 @@ Config is validated with zod on every read. Errors use `zod-validation-error` fo
 
 | Field | Required | Default |
 |-------|----------|---------|
-| `llm` | No (validated only when CSS subscription or summary is triggered) | `{ base_url: "https://api.openai.com/v1" }` |
 | `channels` | No | `[]` |
-| `summary` | No | `{ enabled: false, prompt: "Summarize this article concisely.", language: "en", min_reading_time: 0 }` |
 | `cleanup` | No | `{ ttl_days: 90, max_records: 50000 }` |
 
 ### SQLite Database
@@ -458,7 +402,7 @@ When two `wachi check` processes run simultaneously (two cron jobs, or user runs
 
 ### Relative URL Resolution
 
-RSS items and CSS-extracted links may contain relative URLs (`/post/123`). These are resolved against the subscription URL using `new URL(relativeLink, subscriptionUrl)`. All URLs in notifications are absolute.
+RSS items may contain relative URLs (`/post/123`). These are resolved against the subscription URL using `new URL(relativeLink, subscriptionUrl)`. All URLs in notifications are absolute.
 
 ### Redirect Handling
 
@@ -480,7 +424,7 @@ When a user runs `wachi sub -n <name> [-a <apprise-url>] <url>`:
    b. Probe common feed paths: `/rss`, `/rss.xml`, `/feed`, `/feed.xml`, `/atom`, `/atom.xml`, `/feed/rss`, `/feed/atom`
 3. If multiple RSS feeds found: prefer the first `<link>` tag match (usually the main feed)
 4. If RSS found: store both original URL and discovered RSS URL. Use RSS for ongoing checks
-5. If no RSS found: proceed to LLM-based CSS selector identification
+5. If no RSS found: error with What/Why/Fix pattern explaining that the URL has no discoverable RSS feed
 
 ### RSS Item Field Fallbacks
 
@@ -497,109 +441,18 @@ Store `ETag` and `Last-Modified` response headers per RSS subscription in the SQ
 
 On subsequent fetches, send `If-None-Match` and `If-Modified-Since` headers. If the server returns `304 Not Modified`, skip parsing entirely. Saves bandwidth for frequent checks.
 
-### 2. LLM-Based CSS Selector Identification (Two-Step)
+### 2. Ongoing Change Detection
 
-When no RSS feed is available, wachi uses a two-step approach to bridge the gap between the a11y tree (which has ARIA roles/names but no CSS classes) and the actual DOM (which has CSS selectors):
-
-**Step 1: Identify the main list via a11y tree**
-
-1. Validate LLM config exists. If missing, error:
-   ```
-   Error: LLM configuration required for non-RSS subscriptions.
-
-   https://news.ycombinator.com has no RSS feed. wachi needs an LLM to identify content selectors.
-
-   Set environment variables:
-     export WACHI_LLM_API_KEY="sk-..."
-     export WACHI_LLM_MODEL="gpt-4.1-mini"
-
-   Or add to ~/.config/wachi/config.yml:
-     llm:
-       api_key: "sk-..."
-       model: "gpt-4.1-mini"
-   ```
-2. Auto-install agent-browser if not found. Print to stderr: `Installing browser for selector detection (one-time, ~200MB)...` then run `npx agent-browser install`.
-3. Launch agent-browser:
-   ```bash
-   agent-browser open <url>
-   agent-browser snapshot --json
-   ```
-4. If the a11y tree exceeds the model's context window, truncate to fit. Most main content lists appear early in the DOM.
-5. Send the a11y tree to the LLM with a minimal prompt (trust the model):
-   ```typescript
-   import { generateText, Output } from "ai"
-
-   const { output: refs } = await generateText({
-     model: provider(model),
-     output: Output.object({
-       schema: z.object({
-         list_item_refs: z.array(z.string()).describe("Ref IDs (e.g. '@e5', '@e7') for the main repeating content items"),
-         description: z.string().describe("What kind of content list this is"),
-       }),
-     }),
-     system: "You are analyzing a web page's accessibility tree. Identify the main repeating content list items.",
-     prompt: `Here is the accessibility tree:\n\n${a11yTree}\n\nIdentify the ref IDs of the main repeating content items (e.g. blog posts, news stories, product listings).`,
-   })
-   ```
-
-**Step 2: Derive CSS selectors from DOM (deterministic, no LLM)**
-
-6. Inject [`css-selector-generator`](https://github.com/fczbkk/css-selector-generator) (~15KB UMD bundle) into the page via `agent-browser eval`. This library has built-in multi-element support: `getCssSelector([el1, el2, el3])` returns the shortest CSS selector matching all elements (e.g., `.athing`).
-7. Use `agent-browser eval` to run a script that:
-   a. Gets all identified ref elements
-   b. Calls `getCssSelector([...refElements])` to produce the `item_selector`
-   c. Within each item, finds the primary `<a>` element (the one with href and meaningful text)
-   d. Calls `getCssSelector(aElement, { root: itemElement })` to produce scoped `title_selector` and `link_selector` (may be the same selector if title and link come from the same `<a>`)
-   e. Returns `{ item_selector, title_selector, link_selector }`
-
-**Step 3: Validate against raw HTTP**
-
-8. Fetch the same URL via plain HTTP (no browser)
-9. Apply the identified CSS selectors with cheerio
-10. If selectors match content: proceed, store selectors
-11. If selectors don't match (JS-rendered content): warn:
-    ```
-    Warning: This site appears to require JavaScript rendering.
-    CSS selector monitoring may not work reliably.
-    Subscription created, but checks may fail.
-    ```
-12. Close agent-browser:
-    ```bash
-    agent-browser close
-    ```
-
-**Failure during identification:** If the LLM call or agent-browser subprocess fails (network error, timeout, garbage output), the subscription is NOT created. Print a What/Why/Fix error and exit 1. No half-created subscriptions.
-
-### 3. Selector Staleness Recovery
-
-When a saved CSS selector returns 0 items during a check:
-
-1. Treat 0 items as a failure (sites rarely have truly empty list pages)
-2. Increment failure counter in SQLite
-3. After 3 consecutive failures: re-run the two-step LLM-based selector identification (launch agent-browser again)
-4. If re-identification succeeds: update the selector in config, reset failure counter
-5. If re-identification fails: notify user that the subscription is broken
-
-### 4. Ongoing Change Detection
-
-**RSS subscriptions:**
 - Fetch the RSS feed via ofetch (with ETag/If-Modified-Since)
 - If 304 Not Modified: skip (no changes)
 - Parse with rss-parser
 - For each item: resolve relative URLs, compute dedup hash, INSERT OR IGNORE into sentItems
 - If inserted -> new item -> send notification
 
-**CSS selector subscriptions:**
-- Fetch page via ofetch (no browser needed)
-- Apply `item_selector` with cheerio to find all matching elements
-- For each matched item element, apply `title_selector` and `link_selector` **scoped within that item** (i.e., `$(item).find(titleSelector).text()` and `$(item).find(linkSelector).attr('href')`)
-- For each item: resolve relative URLs, compute dedup hash, INSERT OR IGNORE into sentItems
-- If inserted -> new item -> send notification
-
-### 5. Baseline Behavior
+### 3. Baseline Behavior
 
 When `wachi sub` is called (default, no `--send-existing`):
-1. Immediately fetch the current items (RSS or CSS)
+1. Immediately fetch the current RSS items
 2. Insert ALL items into the dedup table with current timestamp (no cap)
 3. No notifications sent
 4. Next `wachi check` will only send genuinely new items
@@ -609,7 +462,7 @@ When `wachi sub --send-existing` / `-e` is called:
 2. Do NOT pre-seed dedup table
 3. Next `wachi check` will send ALL current items as notifications (they're all "new" to the dedup table)
 
-### 6. URL Reachability Validation
+### 4. URL Reachability Validation
 
 During `wachi sub`, the target URL is fetched to verify reachability. If it returns an HTTP error (4xx/5xx) or times out, the subscription is not created. Error follows What/Why/Fix pattern:
 
@@ -645,16 +498,6 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 <title>
 ```
 
-If summary is enabled and conditions are met, append the summary:
-
-```
-<link>
-
-<title>
-
-<summary>
-```
-
 ### Notification Concurrency
 
 - Notifications to the **same channel** are sent **sequentially** (preserves chronological order, avoids service rate limits)
@@ -682,42 +525,6 @@ If `uvx` is not available, wachi automatically installs uv silently (no prompts)
 - Windows: `powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"`
 
 After uv is installed, `uvx apprise` works immediately.
-
-## Summary Feature
-
-Global summary configuration (applies to ALL channels):
-
-```yaml
-summary:
-  enabled: true
-  prompt: "Summarize focusing on actionable insights"   # Custom LLM prompt
-  language: "ko"                                         # Output language (ISO 639-1)
-  min_reading_time: 3                                    # Minutes. Only summarize if article >= 3 min read
-```
-
-### Summary Flow
-
-For each new item when summary is enabled:
-
-1. Follow the item's link via ofetch
-2. Convert entire page HTML to markdown with [turndown](https://github.com/mixmark-io/turndown) (no article extraction library -- LLM handles noise filtering)
-3. Compute reading time with [reading-time](https://www.npmjs.com/package/reading-time)
-4. If reading time >= `min_reading_time` (default: 0, always summarize):
-   a. Send full markdown to LLM with the user's custom `prompt` + `language` instruction
-   b. LLM ignores navbars, footers, ads and summarizes the main article content
-   c. Append summary to notification body
-5. If reading time < threshold: send notification without summary
-
-**Summary fetch failure:** If the article URL returns 404, paywall, or error, send the notification without summary. Summary is best-effort. Log a warning in verbose mode.
-
-### Summary Defaults
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `false` | Must be explicitly enabled |
-| `prompt` | `"Summarize this article concisely."` | System prompt for LLM |
-| `language` | `"en"` | ISO 639-1 language code for summary output |
-| `min_reading_time` | `0` | Minutes. 0 = always summarize when enabled |
 
 ## HTTP Client
 
@@ -807,21 +614,6 @@ The site may be blocking automated requests. Try again later or check if the URL
 ```
 
 ```
-Error: LLM configuration required for non-RSS subscriptions.
-
-https://news.ycombinator.com has no RSS feed. wachi needs an LLM to identify content selectors.
-
-Set environment variables:
-  export WACHI_LLM_API_KEY="sk-..."
-  export WACHI_LLM_MODEL="gpt-4.1-mini"
-
-Or add to ~/.config/wachi/config.yml:
-  llm:
-    api_key: "sk-..."
-    model: "gpt-4.1-mini"
-```
-
-```
 Error: Config validation failed at channels[0].subscriptions[0].url
 
 Expected a valid URL, received "not-a-url".
@@ -837,12 +629,11 @@ All zod validation errors are wrapped with `zod-validation-error` for human-read
 |----------------------|--------|
 | 1-2 | Silent. Log to SQLite health table. Retry on next check |
 | 3 | Notify user: "wachi: subscription <url> has failed 3 consecutive checks. Last error: <error>" |
-| 3+ (CSS type) | Also attempt automatic selector re-identification via agent-browser + LLM |
 | 10+ | Notify user: "wachi: subscription <url> has been failing for 10+ checks. Consider removing it with `wachi unsub -n <name>`" |
 
 ### Health Counter Reset
 
-The `consecutive_failures` counter resets to 0 on **any successful check** (RSS parses successfully, or CSS selector returns 1+ items). A single success breaks the failure streak.
+The `consecutive_failures` counter resets to 0 on **any successful check** (RSS parses successfully). A single success breaks the failure streak.
 
 ### State Update Rules
 
@@ -850,7 +641,6 @@ The `consecutive_failures` counter resets to 0 on **any successful check** (RSS 
 - Notification fails: item is NOT recorded in dedup table (retried on next check)
 - Check succeeds: reset `consecutive_failures` to 0
 - Check fails (HTTP error, timeout, parse error): increment failure counter, no dedup changes
-- CSS selector returns 0 items: treated as a failure (increment health counter)
 
 ## Security
 
@@ -859,7 +649,6 @@ The `consecutive_failures` counter resets to 0 on **any successful check** (RSS 
 - Config file created with `0600` permissions (owner read/write only)
 - Apprise URLs containing tokens are stored in plaintext (same pattern as docker, gh, aws CLI)
 - Sensitive values can be overridden via environment variables to avoid storing in file:
-  - `WACHI_LLM_API_KEY` for LLM key
   - `WACHI_APPRISE_URL` for overriding notification destination
 
 ## Configuration
@@ -872,21 +661,10 @@ If required config is missing, wachi prints a clear error with exact instruction
 
 | Variable | Purpose |
 |----------|---------|
-| `WACHI_LLM_BASE_URL` | LLM API base URL (default: `https://api.openai.com/v1`) |
-| `WACHI_LLM_API_KEY` | LLM API key |
-| `WACHI_LLM_MODEL` | LLM model name |
 | `WACHI_APPRISE_URL` | Override notification destination for ALL channels (redirects where notifications are sent; config channels still define what URLs to check) |
 | `WACHI_CONFIG_PATH` | Custom config file path |
 | `WACHI_DB_PATH` | Custom database path |
 | `WACHI_NO_AUTO_UPDATE` | Set to `1` to disable auto-update |
-
-### LLM Configuration Defaults
-
-| Field | Default | Required |
-|-------|---------|----------|
-| `base_url` | `https://api.openai.com/v1` | No |
-| `api_key` | (none) | Yes (for CSS subscriptions and summary) |
-| `model` | (none) | Yes (for CSS subscriptions and summary) |
 
 ## Distribution
 
@@ -986,33 +764,13 @@ wachi/
         detect.ts               # Check if URL is RSS feed (Content-Type)
         discover.ts             # Auto-discover RSS from HTML (link tags + common paths)
         parse.ts                # Parse RSS/Atom feed (rss-parser) with field fallbacks
-      css/
-        identify.ts             # Two-step LLM-based CSS selector identification
-        extract.ts              # cheerio-based content extraction
-        validate.ts             # Validate selectors against raw HTTP HTML
-      llm/
-        client.ts               # AI SDK v6 provider setup
-        identify-refs.ts        # Step 1: LLM identifies refs from a11y tree
-        derive-selectors.ts     # Step 2: LLM derives CSS selectors from HTML
-        summarize.ts            # Summarize article content
       notify/
         send.ts                 # Send notification via apprise (uvx), 30s timeout
         format.ts               # Format notification message (body only, no -t flag)
         install-uv.ts           # Auto-install uv silently
-      browser/
-        open.ts                 # agent-browser open
-        snapshot.ts             # agent-browser snapshot --json
-        get-html.ts             # agent-browser get html
-        eval.ts                 # agent-browser eval
-        close.ts                # agent-browser close
-        install.ts              # Auto-install agent-browser with progress message
       http/
         client.ts               # ofetch instance with defaults
         rate-limit.ts           # Per-domain rate limiting (timestamp map + sleep)
-      article/
-        fetch.ts                # Fetch article HTML from link
-        to-markdown.ts          # Full HTML to markdown (turndown, no extraction lib)
-        reading-time.ts         # Compute reading time
       url/
         normalize.ts            # Auto-prepend https://, strip trailing slash
         resolve.ts              # Resolve relative URLs against base
@@ -1050,14 +808,10 @@ wachi/
         rss/detect.test.ts
         rss/discover.test.ts
         rss/parse.test.ts
-        css/extract.test.ts
-        css/validate.test.ts
         notify/format.test.ts
         notify/install-uv.test.ts
         http/client.test.ts
         http/rate-limit.test.ts
-        article/to-markdown.test.ts
-        article/reading-time.test.ts
         url/normalize.test.ts
         url/resolve.test.ts
         url/validate.test.ts
@@ -1070,10 +824,8 @@ wachi/
         error.test.ts
     integration/
       sub-rss.test.ts           # Subscribe to RSS URL end-to-end
-      sub-css.test.ts           # Subscribe to non-RSS URL end-to-end
       sub-idempotent.test.ts    # Subscribing same URL+channel twice is no-op
       check-rss.test.ts         # Check RSS subscription end-to-end
-      check-css.test.ts         # Check CSS subscription end-to-end
       check-dry-run.test.ts     # Dry-run mode end-to-end
       unsub.test.ts             # Unsubscribe end-to-end
       dedup.test.ts             # Dedup behavior across multiple checks
@@ -1101,34 +853,21 @@ All dependencies are installed with `bun i` (never manually edit package.json).
 | Package | Purpose |
 |---------|---------|
 | `citty` | CLI framework |
-| `ai` | Vercel AI SDK v6 |
-| `@ai-sdk/openai` | OpenAI-compatible provider |
 | `zod` | Schema validation |
 | `zod-validation-error` | Human-readable zod errors |
 | `drizzle-orm` | Type-safe SQLite ORM |
 | `drizzle-zod` | Generate zod schemas from drizzle tables |
 | `rss-parser` | RSS/Atom feed parsing |
-| `cheerio` | HTML parsing + CSS selectors |
 | `ofetch` | HTTP client with retry/timeout |
 | `p-limit` | Concurrency limiter |
-| `turndown` | HTML to markdown conversion |
-| `reading-time` | Article reading time estimation |
 | `yaml` | YAML config read/write (round-trip with comment preservation) |
 | `env-paths` | XDG-compliant path resolution |
-| `css-selector-generator` | Common CSS selector for multiple elements (UMD bundle injected into browser via agent-browser eval) |
 
 ### External CLI Tools (subprocess)
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| `agent-browser` | A11y tree + DOM inspection | Auto-installed on first CSS subscription |
 | `apprise` (via uvx) | Notification delivery | Auto-installed via uv |
-
-### Browser-Injected Libraries
-
-| Package | Purpose |
-|---------|---------|
-| `css-selector-generator` | Injected into browser page via `agent-browser eval` during CSS selector identification. Generates the common CSS selector for multiple DOM elements. UMD bundle (~15KB) shipped with wachi |
 
 ### Dev
 
@@ -1138,7 +877,6 @@ All dependencies are installed with `bun i` (never manually edit package.json).
 | `@biomejs/biome` | Linting + formatting |
 | `knip` | Dead code / unused dependency detection |
 | `@types/bun` | Bun type definitions |
-| `@types/turndown` | Turndown type definitions |
 
 ## Testing
 
@@ -1159,7 +897,7 @@ Tests run with `bun test` (native Bun test runner).
 - **Deterministic**: No timing-dependent tests, no network calls in unit tests. All external deps mocked. Tests pass 100% of the time on any machine
 - **Realistic fixtures**: Real RSS feeds and HTML pages captured from actual sites (blog feeds, HN, malformed XML, empty feeds, huge pages)
 - **Error paths tested**: Every error message format (What/Why/Fix) has a corresponding test. Not just happy paths
-- **Edge cases**: Malformed RSS, empty feeds, selector mismatches, concurrent access, network failures, missing fields, relative URLs, idempotent operations
+- **Edge cases**: Malformed RSS, empty feeds, concurrent access, network failures, missing fields, relative URLs, idempotent operations
 
 ### Test Conventions
 
@@ -1201,8 +939,8 @@ crontab -e
 
 - Built-in daemon/scheduler (use crnd, cron, systemd, launchd)
 - Authenticated URL support (no cookies, no login flows, no custom headers)
-- JavaScript-rendered pages for ongoing checks (HTTP-only; agent-browser for initial identification only)
-- JSON API / GraphQL monitoring (HTML + RSS only)
+- Non-RSS sites (RSS feeds only)
+- JSON API / GraphQL monitoring (RSS only)
 - Full page snapshots or visual diffing
 - Web UI or dashboard
 - Multi-user / server deployment
@@ -1224,19 +962,13 @@ crontab -e
 11. `wachi check` command (RSS path + dedup + p-limit concurrency + rate limiting + cleanup + dry-run)
 12. Apprise notification (uvx, silent uv auto-install, body-only format, 30s timeout, sequential per channel)
 13. `wachi test` command (fixed test message)
-14. agent-browser integration (subprocess: open, snapshot, get html, eval, close, auto-install with progress)
-15. LLM integration (AI SDK v6, minimal prompt, a11y tree truncation, two-step selector identification)
-16. CSS selector validation (test against raw HTTP HTML, warn on mismatch)
-17. `wachi sub` command (CSS selector path)
-18. `wachi check` command (CSS selector path with cheerio)
-19. `wachi unsub` command (no confirmation, print what was removed)
-20. Health tracking + selector staleness recovery (0 items = failure)
-21. Article fetching + full turndown + reading-time + global summary (best-effort)
-22. Auto-update feature (24h cooldown, two-phase: download to cache, rename on next run)
-23. `wachi upgrade` command (detect install method from binary location)
-24. `--json` / `-j` flag for all commands (consistent {ok, data, error} envelope)
-25. `--verbose` / `-V` flag (HTTP status, timing, dedup decisions to stderr)
-26. Error handling pass (all errors follow What/Why/Fix pattern, exit codes 0/1/2)
-27. Test suite (unit + integration + e2e, fixtures from real sites, 95%+ coverage)
-28. Build pipeline (`bun build --compile` for 5 targets, version baking)
-29. GitHub Actions workflow (test + lint + knip + build + publish npm + brew + sh)
+14. `wachi unsub` command (no confirmation, print what was removed)
+15. Health tracking (consecutive failure counting + notifications)
+16. Auto-update feature (24h cooldown, two-phase: download to cache, rename on next run)
+17. `wachi upgrade` command (detect install method from binary location)
+18. `--json` / `-j` flag for all commands (consistent {ok, data, error} envelope)
+19. `--verbose` / `-V` flag (HTTP status, timing, dedup decisions to stderr)
+20. Error handling pass (all errors follow What/Why/Fix pattern, exit codes 0/1/2)
+21. Test suite (unit + integration + e2e, fixtures from real sites, 95%+ coverage)
+22. Build pipeline (`bun build --compile` for 5 targets, version baking)
+23. GitHub Actions workflow (test + lint + knip + build + publish npm + brew + sh)

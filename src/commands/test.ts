@@ -3,10 +3,8 @@ import { z } from "zod";
 import { maskAppriseUrl, printJsonSuccess, printStderr, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
 import { readConfig } from "../lib/config/read.ts";
-import { isCssSubscription, isRssSubscription } from "../lib/config/schema.ts";
 import { sendNotification } from "../lib/notify/send.ts";
 import type { SourceIdentity } from "../lib/notify/source-identity.ts";
-import { fetchCssSubscriptionItems } from "../lib/subscriptions/fetch-css-subscription-items.ts";
 import { fetchRssSubscriptionItems } from "../lib/subscriptions/fetch-rss-subscription-items.ts";
 import { WachiError } from "../utils/error.ts";
 import {
@@ -47,23 +45,13 @@ const resolveTestSourceIdentity = async ({
     let lastError: Error | null = null;
     for (const subscription of channel.subscriptions) {
       try {
-        if (isRssSubscription(subscription)) {
-          const fetched = await fetchRssSubscriptionItems({
-            subscriptionUrl: subscription.url,
-            rssUrl: subscription.rss_url,
-            useConditionalRequest: false,
-          });
-          if (fetched.sourceIdentity?.username || fetched.sourceIdentity?.avatarUrl) {
-            return fetched.sourceIdentity;
-          }
-          continue;
-        }
-
-        if (isCssSubscription(subscription)) {
-          const fetched = await fetchCssSubscriptionItems(subscription);
-          if (fetched.sourceIdentity?.username || fetched.sourceIdentity?.avatarUrl) {
-            return fetched.sourceIdentity;
-          }
+        const fetched = await fetchRssSubscriptionItems({
+          subscriptionUrl: subscription.url,
+          rssUrl: subscription.rss_url,
+          useConditionalRequest: false,
+        });
+        if (fetched.sourceIdentity?.username || fetched.sourceIdentity?.avatarUrl) {
+          return fetched.sourceIdentity;
         }
       } catch (error) {
         if (error instanceof Error) {

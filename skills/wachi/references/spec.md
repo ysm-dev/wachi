@@ -7,7 +7,6 @@
 - [Configuration](#configuration)
 - [Change Detection](#change-detection)
 - [Notification Delivery](#notification-delivery)
-- [Summary Feature](#summary-feature)
 - [Error Handling](#error-handling)
 - [Auto-Update](#auto-update)
 
@@ -31,14 +30,6 @@ wachi sub -n <name> [-a <apprise-url>] <url>
    2. Common paths: /rss, /rss.xml, /feed, /feed.xml, /atom, /atom.xml)
        |
   RSS found? ------yes-----> Store original URL + discovered RSS URL
-       |no
-       v
-  Validate LLM config exists (error if missing)
-  Auto-install agent-browser if missing
-  Launch agent-browser -> a11y tree -> LLM identifies refs
-  Derive CSS selectors from DOM (deterministic)
-  Validate selectors against raw HTTP
-  Store URL + CSS selectors + baseline items
 ```
 
 ### Ongoing checks (`wachi check`)
@@ -47,7 +38,6 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 2. Cleanup old dedup records (TTL 90 days + cap 50k)
 3. For each subscription (concurrent, rate-limited per domain):
    - RSS: Fetch (with ETag/If-Modified-Since) -> Parse -> Extract items
-   - CSS: HTTP fetch -> Apply selector with cheerio -> Extract items
    - For each item: compute dedup key `sha256(link + title + channel_name)`, INSERT OR IGNORE
    - If inserted (new): send notification via apprise
 4. Print summary: "3 new, 47 unchanged, 0 errors"
@@ -98,14 +88,6 @@ Feed: https://blog.example.com/feed.xml
 Baseline: 42 items seeded
 ```
 
-**`wachi sub` (CSS):**
-```
-Channel: alerts
-Subscribed (CSS): https://news.ycombinator.com
-Selector: tr.athing
-Baseline: 30 items seeded
-```
-
 **`wachi sub` (idempotent):**
 ```
 Already subscribed: https://blog.example.com -> main
@@ -115,7 +97,6 @@ Already subscribed: https://blog.example.com -> main
 ```
 main (slack://xoxb-.../channel)
   https://blog.example.com (RSS)
-  https://news.ycombinator.com (CSS) [3 failures]
 
 alerts (discord://webhook-id/token)
   https://youtube.com/@channel (RSS)
@@ -138,23 +119,8 @@ sent: New Blog Post Title -> main
 
 Config at `~/.config/wachi/config.yml` (XDG). Created with `0600` permissions on first `wachi sub`.
 
-Subscription type inferred from fields:
-- Has `rss_url` -> RSS
-- Has `item_selector` -> CSS
-
 Full config example:
 ```yaml
-llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: "sk-..."
-  model: "gpt-4.1-mini"
-
-summary:
-  enabled: true
-  prompt: "Summarize focusing on actionable insights"
-  language: "en"
-  min_reading_time: 3
-
 cleanup:
   ttl_days: 90
   max_records: 50000
@@ -165,10 +131,6 @@ channels:
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
-      - url: "https://news.ycombinator.com"
-        item_selector: "tr.athing"
-        title_selector: ".titleline > a"
-        link_selector: ".titleline > a"
 ```
 
 Each channel requires a `name` field. Channel names must be unique (case-insensitive).
@@ -179,9 +141,6 @@ All top-level fields optional. Empty config is valid.
 
 | Variable | Purpose |
 |----------|---------|
-| `WACHI_LLM_BASE_URL` | LLM API base URL (default: `https://api.openai.com/v1`) |
-| `WACHI_LLM_API_KEY` | LLM API key |
-| `WACHI_LLM_MODEL` | LLM model name |
 | `WACHI_APPRISE_URL` | Override notification destination for ALL channels |
 | `WACHI_CONFIG_PATH` | Custom config file path |
 | `WACHI_DB_PATH` | Custom database path |
@@ -206,21 +165,6 @@ Database auto-recovers from corruption: deletes and recreates with a warning.
 
 Uses ETag/If-Modified-Since for bandwidth efficiency on subsequent fetches.
 
-### LLM-Based CSS Selector Identification
-
-When no RSS found:
-
-1. Get a11y tree via `agent-browser snapshot --json`
-2. LLM identifies main list item refs from a11y tree
-3. Derive CSS selectors from DOM using `css-selector-generator` (deterministic)
-4. Validate selectors against raw HTTP (no browser) -- warn if mismatch (JS-rendered site)
-
-Requires LLM config (`WACHI_LLM_API_KEY` + `WACHI_LLM_MODEL`).
-
-### Selector Staleness Recovery
-
-After 3 consecutive failures (0 items): auto re-identify selectors. If fails, notify user.
-
 ### Baseline Behavior
 
 Default: pre-seed all current items into dedup (no notifications on first check). With `--send-existing` / `-e`: skip seeding, send all on next check.
@@ -233,15 +177,6 @@ Default: pre-seed all current items into dedup (no notifications on first check)
 <link>
 
 <title>
-```
-
-With summary:
-```
-<link>
-
-<title>
-
-<summary>
 ```
 
 ### Behavior
@@ -258,25 +193,6 @@ With summary:
 
 `wachi test -n <name>` sends: "wachi test notification -- if you see this, your notification channel is working."
 
-## Summary Feature
-
-```yaml
-summary:
-  enabled: true
-  prompt: "Summarize focusing on actionable insights"
-  language: "ko"
-  min_reading_time: 3
-```
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `enabled` | `false` | Must be explicitly enabled |
-| `prompt` | `"Summarize this article concisely."` | System prompt for LLM |
-| `language` | `"en"` | ISO 639-1 language code |
-| `min_reading_time` | `0` | Minutes; 0 = always summarize |
-
-Flow: fetch article -> convert to markdown -> check reading time -> LLM summarize if above threshold -> append to notification. Best-effort (failure = send without summary).
-
 ## Error Handling
 
 All errors follow **What / Why / Fix** pattern:
@@ -289,29 +205,12 @@ Error: <what happened>
 <how to fix it>
 ```
 
-Examples:
-
-```
-Error: LLM configuration required for non-RSS subscriptions.
-
-https://news.ycombinator.com has no RSS feed. wachi needs an LLM to identify content selectors.
-
-Set environment variables:
-  export WACHI_LLM_API_KEY="sk-..."
-  export WACHI_LLM_MODEL="gpt-4.1-mini"
-
-Or add to ~/.config/wachi/config.yml:
-  llm:
-    api_key: "sk-..."
-    model: "gpt-4.1-mini"
-```
-
 ### Consecutive Failure Tracking
 
 | Failures | Action |
 |----------|--------|
 | 1-2 | Silent, logged internally |
-| 3 | Notify user + auto re-identify CSS selectors |
+| 3 | Notify user |
 | 10+ | Notify user to consider `wachi unsub` |
 
 Counter resets to 0 on any successful check.

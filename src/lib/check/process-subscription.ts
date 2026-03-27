@@ -1,13 +1,7 @@
 import { z } from "zod";
-import {
-  isCssSubscription,
-  isRssSubscription,
-  type ResolvedConfig,
-  type SubscriptionConfig,
-  type UserConfig,
-} from "../config/schema.ts";
+import type { SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
-import { checkCssSubscription } from "./check-css.ts";
+import { isNetworkAvailable, isNetworkLevelError } from "../http/check-connectivity.ts";
 import { checkRssSubscription } from "./check-rss.ts";
 import { handleSubscriptionFailure } from "./handle-failure.ts";
 import type { CheckStats } from "./handle-items.ts";
@@ -22,9 +16,6 @@ const processSubscriptionOptionsSchema = z.object({
   dryRun: z.boolean(),
   isJson: z.boolean(),
   isVerbose: z.boolean(),
-  config: z.custom<ResolvedConfig>(),
-  rawConfig: z.custom<UserConfig>(),
-  onConfigMutated: z.custom<() => void>(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: z.custom<QueueFn>(),
 });
@@ -39,34 +30,11 @@ export const processSubscriptionCheck = async ({
   dryRun,
   isJson,
   isVerbose,
-  config,
-  rawConfig,
-  onConfigMutated,
   stats,
   enqueueForChannel,
 }: ProcessSubscriptionOptions): Promise<void> => {
   try {
-    if (isRssSubscription(subscription)) {
-      await checkRssSubscription({
-        channelName,
-        effectiveChannelUrl,
-        subscription,
-        db,
-        dryRun,
-        isJson,
-        isVerbose,
-        config,
-        stats,
-        enqueueForChannel,
-      });
-      return;
-    }
-
-    if (!isCssSubscription(subscription)) {
-      return;
-    }
-
-    await checkCssSubscription({
+    await checkRssSubscription({
       channelName,
       effectiveChannelUrl,
       subscription,
@@ -74,20 +42,20 @@ export const processSubscriptionCheck = async ({
       dryRun,
       isJson,
       isVerbose,
-      config,
       stats,
       enqueueForChannel,
     });
   } catch (error) {
+    if (isNetworkLevelError(error) && !(await isNetworkAvailable())) {
+      return;
+    }
+
     await handleSubscriptionFailure({
       channelName,
       effectiveChannelUrl,
       subscription,
       db,
       dryRun,
-      config,
-      rawConfig,
-      onConfigMutated,
       stats,
       enqueueForChannel,
       error,

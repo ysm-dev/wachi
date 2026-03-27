@@ -9,9 +9,6 @@ const readEnv = (name: string): string | undefined => {
 
 export const getEnv = () => {
   return {
-    llmBaseUrl: readEnv("WACHI_LLM_BASE_URL"),
-    llmApiKey: readEnv("WACHI_LLM_API_KEY"),
-    llmModel: readEnv("WACHI_LLM_MODEL"),
     appriseUrlOverride: readEnv("WACHI_APPRISE_URL"),
     configPath: readEnv("WACHI_CONFIG_PATH"),
     dbPath: readEnv("WACHI_DB_PATH"),

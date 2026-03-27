@@ -4,7 +4,6 @@ import { getEnv } from "../../utils/env.ts";
 import { printJsonSuccess, printStderr, printStdout } from "../cli/io.ts";
 import { toChannelNameKey } from "../config/channel-name-key.ts";
 import { readConfig } from "../config/read.ts";
-import { writeConfig } from "../config/write.ts";
 import { cleanupSentItems } from "../db/cleanup-sent-items.ts";
 import { connectDb } from "../db/connect.ts";
 import { checkForUpdate } from "../update/check.ts";
@@ -94,8 +93,6 @@ export const runCheck = async ({
       : configState.config.channels;
 
     const stats: CheckStats = { sent: [], skipped: 0, errors: [] };
-    const rawConfig = structuredClone(configState.rawConfig);
-    let configMutated = false;
     const limit = pLimit(Math.max(1, concurrency));
     const enqueueForChannel = createChannelQueue();
     const tasks: Array<Promise<void>> = [];
@@ -113,11 +110,6 @@ export const runCheck = async ({
               dryRun,
               isJson,
               isVerbose,
-              config: configState.config,
-              rawConfig,
-              onConfigMutated: () => {
-                configMutated = true;
-              },
               stats,
               enqueueForChannel,
             });
@@ -127,11 +119,6 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
-
-    if (configMutated) {
-      await writeConfig({ config: rawConfig, path: configState.path, format: configState.format });
-    }
-
     printFinalSummary(stats, dryRun, isJson);
     return resolveExitCode(stats);
   } finally {

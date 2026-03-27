@@ -10,7 +10,7 @@ export type BaselineItem = z.infer<typeof baselineItemSchema>;
 
 const preparedSubscriptionSchema = z.object({
   subscription: z.custom<SubscriptionConfig>(),
-  subscriptionType: z.union([z.literal("rss"), z.literal("css")]),
+  subscriptionType: z.literal("rss"),
   baselineItems: z.array(baselineItemSchema),
   warning: z.string().optional(),
 });

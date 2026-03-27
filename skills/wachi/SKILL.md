@@ -1,6 +1,6 @@
 ---
 name: wachi
-description: "Install, configure, and use the wachi CLI to monitor any URL for new content and get notifications via 90+ services (Slack, Discord, Telegram, email, etc.). Use when the user wants to: (1) subscribe to web pages, blogs, YouTube channels, or RSS feeds for change notifications, (2) set up URL monitoring with wachi sub/check/ls commands, (3) configure notification channels via apprise URLs, (4) schedule periodic checks with cron, (5) troubleshoot wachi errors or configuration, or (6) understand how wachi detects changes (RSS auto-discovery, LLM-based CSS selectors)."
+description: "Install, configure, and use the wachi CLI to monitor any URL for new content and get notifications via 90+ services (Slack, Discord, Telegram, email, etc.). Use when the user wants to: (1) subscribe to web pages, blogs, YouTube channels, or RSS feeds for change notifications, (2) set up URL monitoring with wachi sub/check/ls commands, (3) configure notification channels via apprise URLs, (4) schedule periodic checks with cron, (5) troubleshoot wachi errors or configuration, or (6) understand how wachi detects changes via RSS auto-discovery."
 ---
 
 # wachi
@@ -64,26 +64,13 @@ wachi upgrade                     Update wachi to latest version
 
 1. `wachi sub` checks if the URL has an RSS feed (auto-discovery via `<link>` tags and common paths)
 2. If RSS found: store and use RSS for ongoing checks
-3. If no RSS: use LLM + agent-browser to identify CSS selectors via accessibility tree analysis
-4. `wachi check` fetches each subscription, compares against dedup table (SHA-256 hash), sends new items via apprise
+3. `wachi check` fetches each subscription, compares against dedup table (SHA-256 hash), sends new items via apprise
 
 ## Configuration
 
 Config at `~/.config/wachi/config.yml` (auto-created on first `wachi sub`).
 
 ```yaml
-# LLM config (only needed for non-RSS sites)
-# Also settable via WACHI_LLM_API_KEY, WACHI_LLM_MODEL env vars
-llm:
-  api_key: "sk-..."
-  model: "gpt-4.1-mini"
-
-# Optional: summarize articles before sending
-summary:
-  enabled: true
-  language: "en"
-  min_reading_time: 3  # minutes
-
 # Channels managed by wachi sub/unsub
 channels:
   - name: "main"
@@ -99,9 +86,6 @@ All fields optional with sensible defaults. Empty config is valid.
 
 | Variable | Purpose |
 |----------|---------|
-| `WACHI_LLM_API_KEY` | LLM API key |
-| `WACHI_LLM_MODEL` | LLM model name |
-| `WACHI_LLM_BASE_URL` | LLM API base URL (default: OpenAI) |
 | `WACHI_NO_AUTO_UPDATE` | Set to `1` to disable auto-update |
 
 ## Notification Channels
@@ -142,9 +126,6 @@ crontab -e
 ```bash
 # Blog (auto-discovers RSS)
 wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
-
-# Hacker News (LLM identifies selectors)
-wachi sub -n alerts -a "discord://webhook-id/token" "https://news.ycombinator.com"
 
 # YouTube channel
 wachi sub -n media -a "tgram://bot-token/chat-id" "https://youtube.com/@channel"

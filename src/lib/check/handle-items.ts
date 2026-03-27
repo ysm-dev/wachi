@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { printStderr, printStdout } from "../cli/io.ts";
-import type { ResolvedConfig } from "../config/schema.ts";
 import { buildDedupHash } from "../db/build-dedup-hash.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { deleteDedupRecord } from "../db/delete-dedup-record.ts";
@@ -9,7 +8,6 @@ import { insertDedupRecord } from "../db/insert-dedup-record.ts";
 import { formatNotificationBody } from "../notify/format.ts";
 import { sendNotification } from "../notify/send.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
-import { buildItemSummary } from "../subscriptions/summary.ts";
 
 const sentRecordSchema = z.object({
   title: z.string(),
@@ -46,7 +44,6 @@ const handleItemsOptionsSchema = z.object({
   dryRun: z.boolean(),
   isJson: z.boolean(),
   isVerbose: z.boolean(),
-  config: z.custom<ResolvedConfig>(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: enqueueForChannelSchema,
   sourceIdentity: z.custom<SourceIdentity>().optional(),
@@ -71,7 +68,6 @@ export const handleSubscriptionItems = async ({
   dryRun,
   isJson,
   isVerbose,
-  config,
   stats,
   enqueueForChannel,
   sourceIdentity,
@@ -106,8 +102,7 @@ export const handleSubscriptionItems = async ({
       continue;
     }
 
-    const summary = await buildItemSummary(item.link, config, isVerbose);
-    const body = formatNotificationBody(item.link, item.title, summary ?? undefined);
+    const body = formatNotificationBody(item.link, item.title);
 
     try {
       await enqueueForChannel(effectiveChannelUrl, async () => {

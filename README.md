@@ -4,12 +4,11 @@
 [![CI](https://github.com/ysm-dev/wachi/actions/workflows/release.yml/badge.svg)](https://github.com/ysm-dev/wachi/actions)
 [![license](https://img.shields.io/npm/l/wachi)](https://github.com/ysm-dev/wachi/blob/main/LICENSE)
 
-**Subscribe any link and get notified on change.**
+**Monitor RSS feeds and get notified on new content.**
 
-wachi monitors any URL for new content and pushes notifications to 90+ services via [apprise](https://github.com/caronc/apprise). It auto-discovers RSS feeds when available, and uses LLM-powered CSS selector identification for everything else.
+wachi monitors RSS feeds for new content and pushes notifications to 90+ services via [apprise](https://github.com/caronc/apprise). It auto-discovers RSS feeds when available.
 
 - **Zero config for RSS** -- point at a blog, wachi finds the feed
-- **LLM-powered for the rest** -- no RSS? wachi uses AI to identify content selectors via accessibility tree analysis
 - **90+ notification services** -- Slack, Discord, Telegram, email, and [more](https://github.com/caronc/apprise/wiki)
 - **Stateless by design** -- `wachi check` is a one-shot command, perfect for cron
 - **No interactive prompts** -- built for automation and AI agents
@@ -55,15 +54,6 @@ wachi sub -n <name> [-a <apprise-url>] <url>
       ▼
   Auto-discover RSS ───found───▶ Store URL + discovered feed
   (link tags, common paths)
-      │not found
-      ▼
-  LLM identifies content via accessibility tree
-      │
-  Derive CSS selectors from DOM (deterministic)
-      │
-  Validate selectors against raw HTTP
-      │
-  Store URL + selectors + baseline
 ```
 
 On `wachi check`, each subscription is fetched and compared against a dedup table. New items trigger notifications via apprise. Old items are skipped. That's it.
@@ -97,8 +87,8 @@ wachi upgrade                     Update wachi to latest version
 # Blog (auto-discovers RSS)
 wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
-# Hacker News front page (LLM identifies content selectors)
-wachi sub -n alerts -a "discord://webhook-id/token" "https://news.ycombinator.com"
+# GitHub releases RSS feed
+wachi sub -n alerts -a "discord://webhook-id/token" "https://github.com/ysm-dev/wachi/releases.atom"
 
 # Add another subscription to an existing channel name
 wachi sub -n main "https://example.com/changelog"
@@ -110,7 +100,7 @@ wachi sub -n media -a "tgram://bot-token/chat-id" "https://youtube.com/@channel"
 wachi sub -n main "blog.example.com"
 
 # Send all existing items on next check (no baseline)
-wachi sub -n alerts -e "https://news.ycombinator.com"
+wachi sub -n alerts -e "https://github.com/ysm-dev/wachi/releases.atom"
 
 # Dry-run: see what would be sent
 wachi check -d
@@ -151,18 +141,6 @@ Config lives at `~/.config/wachi/config.yml` (XDG-compliant, default). Auto-crea
 `wachi` reads config in this order: `config.yml` -> `config.jsonc` -> `config.json`.
 
 ```yaml
-# LLM config (only needed for non-RSS sites)
-# Also settable via WACHI_LLM_API_KEY, WACHI_LLM_MODEL env vars
-llm:
-  api_key: "sk-..."
-  model: "gpt-4.1-mini"
-
-# Optional: summarize articles before sending
-summary:
-  enabled: true
-  language: "en"
-  min_reading_time: 3  # minutes
-
 # Channels and subscriptions (managed by wachi sub/unsub)
 channels:
   - name: "main"
@@ -170,10 +148,6 @@ channels:
     subscriptions:
       - url: "https://blog.example.com"
         rss_url: "https://blog.example.com/feed.xml"
-      - url: "https://news.ycombinator.com"
-        item_selector: "tr.athing"
-        title_selector: ".titleline > a"
-        link_selector: ".titleline > a"
 ```
 
 Each channel entry requires `name`. Names must be unique (case-insensitive).
@@ -182,9 +156,6 @@ All fields are optional with sensible defaults. An empty config file is valid.
 
 | Variable | Purpose |
 |----------|---------|
-| `WACHI_LLM_API_KEY` | LLM API key |
-| `WACHI_LLM_MODEL` | LLM model name |
-| `WACHI_LLM_BASE_URL` | LLM API base URL (default: OpenAI) |
 | `WACHI_NO_AUTO_UPDATE` | Set to `1` to disable auto-update |
 
 ## Design
@@ -193,7 +164,6 @@ All fields are optional with sensible defaults. An empty config file is valid.
 - **Dedup, not state** -- items tracked by `sha256(link + title + channel)`. If the hash exists, it was already sent
 - **No interactive prompts** -- ever. Errors tell you exactly what to set and where (What / Why / Fix pattern)
 - **Baseline seeding** -- on subscribe, all current items are pre-seeded so your channel isn't flooded
-- **Auto-healing** -- CSS selectors go stale? After 3 consecutive failures, wachi re-identifies them automatically
 - **SQLite WAL mode** -- safe concurrent reads. Two cron jobs won't conflict
 - **Atomic config writes** -- write to temp, then rename. No corruption from concurrent access
 - **JSON envelope** -- `--json` on all commands returns `{"ok": true, "data": {...}}` or `{"ok": false, "error": {"what", "why", "fix"}}`
@@ -223,9 +193,7 @@ bun run db:generate
 | CLI | [citty](https://github.com/unjs/citty) |
 | Database | [drizzle-orm](https://github.com/drizzle-team/drizzle-orm) + bun:sqlite |
 | HTTP | [ofetch](https://github.com/unjs/ofetch) |
-| LLM | [Vercel AI SDK](https://github.com/vercel/ai) v6 |
 | RSS | [rss-parser](https://github.com/rbren/rss-parser) |
-| HTML | [cheerio](https://github.com/cheeriojs/cheerio) |
 | Notifications | [apprise](https://github.com/caronc/apprise) via uvx |
 | Linter | [Biome](https://biomejs.dev/) v2 |
 
