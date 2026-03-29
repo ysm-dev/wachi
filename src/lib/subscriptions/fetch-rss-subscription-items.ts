@@ -8,13 +8,17 @@ import { waitForDomainRateLimit } from "../http/rate-limit.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
 import { parseRssFeed } from "../rss/parse.ts";
 import { resolveUrl } from "../url/resolve.ts";
+import { loadWebsiteBranding } from "./load-website-branding.ts";
 import {
-  extractWebsiteBranding,
   fallbackWebsiteFaviconUrl,
   fallbackWebsiteTitle,
   googleS2FaviconUrl,
 } from "./source-branding.ts";
 import { subscriptionItemSchema } from "./subscription-item.ts";
+
+const RSS_FETCH_TIMEOUT_MS = 5_000;
+const RSS_FETCH_RETRY_COUNT = 1;
+const RSS_FETCH_RETRY_DELAY_MS = 250;
 
 const fetchRssItemsOptionsSchema = z.object({
   subscriptionUrl: z.string(),
@@ -41,23 +45,6 @@ export type FetchRssItemsResult = z.infer<typeof fetchRssItemsResultSchema>;
 const etagMetaKey = (rssUrl: string): string => `etag:${rssUrl}`;
 const lastModifiedMetaKey = (rssUrl: string): string => `last-modified:${rssUrl}`;
 
-const fetchWebsiteBranding = async (subscriptionUrl: string) => {
-  try {
-    await waitForDomainRateLimit(subscriptionUrl);
-    const response = await http.raw(subscriptionUrl, {
-      responseType: "text",
-      ignoreResponseError: true,
-    });
-    if (response.status >= 400) {
-      return { title: null, faviconUrl: null };
-    }
-    const html = typeof response._data === "string" ? response._data : "";
-    return extractWebsiteBranding(subscriptionUrl, html);
-  } catch {
-    return { title: null, faviconUrl: null };
-  }
-};
-
 const resolveOptionalUrl = (value: string | null, baseUrl: string): string | null => {
   if (!value) {
     return null;
@@ -75,17 +62,19 @@ const buildSourceIdentity = async ({
   rssUrl,
   feedTitle,
   feedImageUrl,
+  db,
 }: {
   subscriptionUrl: string;
   rssUrl: string;
   feedTitle: string | null;
   feedImageUrl: string | null;
+  db?: WachiDb;
 }): Promise<SourceIdentity> => {
   let websiteTitle: string | null = null;
   let websiteFaviconUrl: string | null = null;
 
   if (!feedTitle || !feedImageUrl) {
-    const websiteBranding = await fetchWebsiteBranding(subscriptionUrl);
+    const websiteBranding = await loadWebsiteBranding(subscriptionUrl, db);
     websiteTitle = websiteBranding.title;
     websiteFaviconUrl = websiteBranding.faviconUrl;
   }
@@ -129,6 +118,9 @@ export const fetchRssSubscriptionItems = async ({
     responseType: "text",
     headers,
     ignoreResponseError: true,
+    timeout: RSS_FETCH_TIMEOUT_MS,
+    retry: RSS_FETCH_RETRY_COUNT,
+    retryDelay: RSS_FETCH_RETRY_DELAY_MS,
   });
 
   if (response.status === 304) {
@@ -161,6 +153,7 @@ export const fetchRssSubscriptionItems = async ({
     rssUrl,
     feedTitle: parsed.title,
     feedImageUrl: parsed.imageUrl,
+    db,
   });
 
   return {

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { sendNotification } from "../../../../src/lib/notify/send.ts";
+import {
+  resetSendNotificationStateForTest,
+  sendNotification,
+} from "../../../../src/lib/notify/send.ts";
 import { WachiError } from "../../../../src/utils/error.ts";
 
 type MockProc = {
@@ -13,6 +16,7 @@ const originalSpawn = Bun.spawn;
 
 afterEach(() => {
   Bun.spawn = originalSpawn;
+  resetSendNotificationStateForTest();
 });
 
 const makeStream = (text: string): ReadableStream<Uint8Array> => {
@@ -204,5 +208,33 @@ describe("sendNotification", () => {
     });
 
     expect(sentAppriseUrl).toBe("gotify://token@notify.example.com/topic");
+  });
+
+  it("checks for uvx only once across repeated sends", async () => {
+    const commands: string[][] = [];
+    Bun.spawn = ((command: string[]) => {
+      commands.push(command);
+      if (command[0] === "uvx") {
+        return {
+          exited: Promise.resolve(0),
+          stdout: makeStream(""),
+          stderr: makeStream(""),
+          kill: () => {},
+        } as MockProc;
+      }
+
+      return {
+        exited: Promise.resolve(0),
+        kill: () => {},
+      } as MockProc;
+    }) as unknown as typeof Bun.spawn;
+
+    await sendNotification({ appriseUrl: "slack://token/channel", body: "one" });
+    await sendNotification({ appriseUrl: "slack://token/channel", body: "two" });
+
+    expect(commands).toHaveLength(3);
+    expect(commands[0]?.slice(0, 3)).toEqual(["sh", "-lc", "command -v uvx"]);
+    expect(commands[1]?.[0]).toBe("uvx");
+    expect(commands[2]?.[0]).toBe("uvx");
   });
 });

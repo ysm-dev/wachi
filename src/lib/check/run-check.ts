@@ -75,10 +75,7 @@ export const runCheck = async ({
   const env = getEnv();
 
   try {
-    const latestVersion = await checkForUpdate(db);
-    if (latestVersion && !isJson) {
-      printStderr(`Update available: ${latestVersion}`);
-    }
+    const updateCheck = checkForUpdate(db);
 
     cleanupSentItems(
       db,
@@ -119,6 +116,10 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
+    const latestVersion = await updateCheck;
+    if (latestVersion && !isJson) {
+      printStderr(`Update available: ${latestVersion}`);
+    }
     printFinalSummary(stats, dryRun, isJson);
     return resolveExitCode(stats);
   } finally {

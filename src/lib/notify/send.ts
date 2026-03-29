@@ -3,6 +3,25 @@ import { WachiError } from "../../utils/error.ts";
 import { ensureUvx } from "./install-uv.ts";
 import { personalizeAppriseUrl, sourceIdentitySchema } from "./source-identity.ts";
 
+const DEFAULT_NOTIFICATION_TIMEOUT_MS = 8_000;
+
+let notificationRuntimeReady: Promise<void> | null = null;
+
+const ensureNotificationRuntime = async (): Promise<void> => {
+  if (!notificationRuntimeReady) {
+    notificationRuntimeReady = ensureUvx().catch((error) => {
+      notificationRuntimeReady = null;
+      throw error;
+    });
+  }
+
+  await notificationRuntimeReady;
+};
+
+export const resetSendNotificationStateForTest = (): void => {
+  notificationRuntimeReady = null;
+};
+
 const sendNotificationOptionsSchema = z.object({
   appriseUrl: z.string(),
   body: z.string(),
@@ -15,10 +34,10 @@ type SendNotificationOptions = z.infer<typeof sendNotificationOptionsSchema>;
 export const sendNotification = async ({
   appriseUrl,
   body,
-  timeoutMs = 30_000,
+  timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS,
   sourceIdentity,
 }: SendNotificationOptions): Promise<void> => {
-  await ensureUvx();
+  await ensureNotificationRuntime();
 
   const effectiveAppriseUrl = personalizeAppriseUrl(appriseUrl, sourceIdentity);
 
@@ -33,7 +52,7 @@ export const sendNotification = async ({
       reject(
         new WachiError(
           `Failed to send notification to ${appriseUrl}`,
-          "apprise timed out after 30 seconds.",
+          `apprise timed out after ${Math.ceil(timeoutMs / 1_000)} seconds.`,
           "Check network connectivity and apprise service health, then try again.",
         ),
       );

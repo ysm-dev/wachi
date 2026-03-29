@@ -3,6 +3,7 @@ import { FetchError } from "ofetch";
 import {
   isNetworkAvailable,
   isNetworkLevelError,
+  resetNetworkAvailabilityStateForTest,
 } from "../../../../src/lib/http/check-connectivity.ts";
 
 describe("isNetworkLevelError", () => {
@@ -36,6 +37,7 @@ describe("isNetworkAvailable", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetNetworkAvailabilityStateForTest();
   });
 
   it("returns true when fetch succeeds", async () => {

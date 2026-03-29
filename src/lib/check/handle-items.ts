@@ -72,7 +72,7 @@ export const handleSubscriptionItems = async ({
   enqueueForChannel,
   sourceIdentity,
 }: HandleItemsOptions): Promise<void> => {
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     const dedupHash = buildDedupHash(channelName, item.title, item.link);
 
     if (dryRun) {
@@ -119,6 +119,14 @@ export const handleSubscriptionItems = async ({
     } catch (error) {
       deleteDedupRecord(db, dedupHash);
       stats.errors.push(error instanceof Error ? error.message : "notification failed");
+
+      const remaining = items.length - index - 1;
+      if (remaining > 0 && isVerbose) {
+        printStderr(
+          `[verbose] aborting ${remaining} pending notifications for ${channelName} after delivery failure`,
+        );
+      }
+      break;
     }
   }
 };

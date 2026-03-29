@@ -6,6 +6,7 @@ import { setMetaValue } from "../db/set-meta-value.ts";
 import { http } from "../http/client.ts";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_TIMEOUT_MS = 1_500;
 
 const isNewerVersion = (current: string, latest: string): boolean => {
   const currentParts = current.split(".").map((part) => Number(part));
@@ -44,6 +45,7 @@ export const checkForUpdate = async (db: WachiDb): Promise<string | null> => {
   try {
     const latestInfo = await http<{ version?: string }>("https://registry.npmjs.org/wachi/latest", {
       retry: 0,
+      timeout: UPDATE_CHECK_TIMEOUT_MS,
     });
     const latestVersion = latestInfo.version;
     if (!latestVersion) {

@@ -254,6 +254,54 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
   });
 
+  it("reuses cached website branding across repeated checks", async () => {
+    let siteRequests = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          siteRequests += 1;
+          return new Response(
+            "<html><head><title>Website Title</title><link rel='icon' href='/icons/site.png'></head></html>",
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        if (url.pathname === "/feed.xml") {
+          return new Response(feedWithoutTitleXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+
+    await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: false,
+    });
+
+    await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: false,
+    });
+
+    expect(siteRequests).toBe(1);
+  });
+
   it("falls back to URL-derived identity when website fetch returns >= 400", async () => {
     const server = Bun.serve({
       port: 0,

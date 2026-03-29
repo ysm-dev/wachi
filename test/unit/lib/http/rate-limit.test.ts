@@ -10,4 +10,14 @@ describe("waitForDomainRateLimit", () => {
     await expect(waitForDomainRateLimit("https://example.com/a", 0)).resolves.toBeUndefined();
     await expect(waitForDomainRateLimit("https://example.com/b", 0)).resolves.toBeUndefined();
   });
+
+  it("serializes concurrent calls for the same host", async () => {
+    const start = Date.now();
+    const offsets = await Promise.all([
+      waitForDomainRateLimit("https://example.com/a", 40).then(() => Date.now() - start),
+      waitForDomainRateLimit("https://example.com/b", 40).then(() => Date.now() - start),
+    ]);
+
+    expect(Math.max(...offsets) - Math.min(...offsets)).toBeGreaterThanOrEqual(30);
+  });
 });
