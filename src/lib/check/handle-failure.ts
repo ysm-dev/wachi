@@ -29,14 +29,15 @@ const maybeSendFailureAlert = async (
   dryRun: boolean,
   enqueueForChannel: QueueFn,
 ): Promise<void> => {
-  if (!(failures === 3 || failures >= 10) || dryRun) {
+  const isMilestone = failures > 10 && failures % 100 === 0;
+  if (!(failures === 3 || failures === 10 || isMilestone) || dryRun) {
     return;
   }
 
   const body =
-    failures >= 10
-      ? `wachi: subscription ${subscriptionUrl} has been failing for 10+ checks. Consider removing it with wachi unsub -n "${channelName}".`
-      : `wachi: subscription ${subscriptionUrl} has failed 3 consecutive checks. Last error: ${message}`;
+    failures === 3
+      ? `wachi: subscription ${subscriptionUrl} has failed 3 consecutive checks. Last error: ${message}`
+      : `wachi: subscription ${subscriptionUrl} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
 
   try {
     await enqueueForChannel(effectiveChannelUrl, async () => {
