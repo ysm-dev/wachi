@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { printStderr, printStdout } from "../cli/io.ts";
+import type { LinkTransform } from "../config/schema.ts";
 import { buildDedupHash } from "../db/build-dedup-hash.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { deleteDedupRecord } from "../db/delete-dedup-record.ts";
@@ -8,6 +9,7 @@ import { insertDedupRecord } from "../db/insert-dedup-record.ts";
 import { formatNotificationBody } from "../notify/format.ts";
 import { sendNotification } from "../notify/send.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
+import { transformLink } from "../url/transform.ts";
 
 const sentRecordSchema = z.object({
   title: z.string(),
@@ -47,6 +49,7 @@ const handleItemsOptionsSchema = z.object({
   stats: z.custom<CheckStats>(),
   enqueueForChannel: enqueueForChannelSchema,
   sourceIdentity: z.custom<SourceIdentity>().optional(),
+  linkTransforms: z.custom<LinkTransform[]>(),
 });
 
 type HandleItemsOptions = z.infer<typeof handleItemsOptionsSchema>;
@@ -71,6 +74,7 @@ export const handleSubscriptionItems = async ({
   stats,
   enqueueForChannel,
   sourceIdentity,
+  linkTransforms,
 }: HandleItemsOptions): Promise<void> => {
   for (const [index, item] of items.entries()) {
     const dedupHash = buildDedupHash(channelName, item.title, item.link);
@@ -102,7 +106,8 @@ export const handleSubscriptionItems = async ({
       continue;
     }
 
-    const body = formatNotificationBody(item.link, item.title);
+    const notificationLink = transformLink(item.link, linkTransforms);
+    const body = formatNotificationBody(notificationLink, item.title);
 
     try {
       await enqueueForChannel(effectiveChannelUrl, async () => {

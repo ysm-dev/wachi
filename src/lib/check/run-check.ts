@@ -109,6 +109,7 @@ export const runCheck = async ({
               isVerbose,
               stats,
               enqueueForChannel,
+              linkTransforms: configState.config.link_transforms,
             });
           }),
         );

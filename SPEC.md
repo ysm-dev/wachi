@@ -313,6 +313,13 @@ cleanup:
   ttl_days: 90
   max_records: 50000
 
+# Link transforms: replace hostnames in notification links (e.g., for better embeds)
+link_transforms:
+  - from: "x.com"
+    to: "fixupx.com"
+  - from: "twitter.com"
+    to: "fxtwitter.com"
+
 # Channels and subscriptions
 channels:
   - name: "main"
@@ -340,6 +347,15 @@ Config is validated with zod on every read. Errors use `zod-validation-error` fo
 |-------|----------|---------|
 | `channels` | No | `[]` |
 | `cleanup` | No | `{ ttl_days: 90, max_records: 50000 }` |
+| `link_transforms` | No | `[]` |
+
+### Link Transforms
+
+`link_transforms` replaces hostnames in notification links before sending. This is useful for services like Discord or Slack where embed-friendly URLs (e.g., `fixupx.com` instead of `x.com`) produce better link previews.
+
+Each entry has a `from` (source hostname) and `to` (replacement hostname). Only the hostname is replaced; path, query, and fragment are preserved. The `www.` prefix is stripped for matching (both `x.com` and `www.x.com` match `from: "x.com"`).
+
+Transforms apply only to notification body links. Dedup hashes always use the original link to avoid re-sending items when transforms change.
 
 ### SQLite Database
 
@@ -775,6 +791,7 @@ wachi/
         normalize.ts            # Auto-prepend https://, strip trailing slash
         resolve.ts              # Resolve relative URLs against base
         validate.ts             # Reachability check, apprise URL format check
+        transform.ts            # Replace hostnames in links for embed-friendly URLs
       update/
         check.ts                # Check for new version (npm registry)
         apply.ts                # Download binary to cache, two-phase replacement
@@ -815,6 +832,7 @@ wachi/
         url/normalize.test.ts
         url/resolve.test.ts
         url/validate.test.ts
+        url/transform.test.ts
         update/check.test.ts
         update/detect-method.test.ts
       utils/

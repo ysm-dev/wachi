@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SubscriptionConfig } from "../config/schema.ts";
+import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { isNetworkAvailable, isNetworkLevelError } from "../http/check-connectivity.ts";
 import { checkRssSubscription } from "./check-rss.ts";
@@ -18,6 +18,7 @@ const processSubscriptionOptionsSchema = z.object({
   isVerbose: z.boolean(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: z.custom<QueueFn>(),
+  linkTransforms: z.custom<LinkTransform[]>(),
 });
 
 type ProcessSubscriptionOptions = z.infer<typeof processSubscriptionOptionsSchema>;
@@ -32,6 +33,7 @@ export const processSubscriptionCheck = async ({
   isVerbose,
   stats,
   enqueueForChannel,
+  linkTransforms,
 }: ProcessSubscriptionOptions): Promise<void> => {
   try {
     await checkRssSubscription({
@@ -44,6 +46,7 @@ export const processSubscriptionCheck = async ({
       isVerbose,
       stats,
       enqueueForChannel,
+      linkTransforms,
     });
   } catch (error) {
     if (isNetworkLevelError(error) && !(await isNetworkAvailable())) {

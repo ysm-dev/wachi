@@ -35,20 +35,28 @@ const channelsSchema = z.array(channelSchema).superRefine((channels, context) =>
   }
 });
 
+export const linkTransformSchema = z.object({
+  from: z.string().min(1),
+  to: z.string().min(1),
+});
+
 export const userConfigSchema = z.object({
   cleanup: cleanupConfigSchema.partial().optional(),
   channels: channelsSchema.optional(),
+  link_transforms: z.array(linkTransformSchema).optional(),
 });
 
 export const resolvedConfigSchema = z.object({
   cleanup: cleanupConfigSchema.default({ ttl_days: 90, max_records: 50_000 }),
   channels: channelsSchema.default([]),
+  link_transforms: z.array(linkTransformSchema).default([]),
 });
 
 export type UserConfig = z.infer<typeof userConfigSchema>;
 export type ResolvedConfig = z.infer<typeof resolvedConfigSchema>;
 export type ChannelConfig = z.infer<typeof channelSchema>;
 export type SubscriptionConfig = z.infer<typeof subscriptionSchema>;
+export type LinkTransform = z.infer<typeof linkTransformSchema>;
 
 export const applyConfigDefaults = (config: UserConfig): ResolvedConfig => {
   return resolvedConfigSchema.parse(config);

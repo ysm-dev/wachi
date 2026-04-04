@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SubscriptionConfig } from "../config/schema.ts";
+import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { markHealthSuccess } from "../db/mark-health-success.ts";
 import { fetchRssSubscriptionItems } from "../subscriptions/fetch-rss-subscription-items.ts";
@@ -17,6 +17,7 @@ const checkRssOptionsSchema = z.object({
   isVerbose: z.boolean(),
   stats: z.custom<CheckStats>(),
   enqueueForChannel: z.custom<QueueFn>(),
+  linkTransforms: z.custom<LinkTransform[]>(),
 });
 
 type CheckRssOptions = z.infer<typeof checkRssOptionsSchema>;
@@ -31,6 +32,7 @@ export const checkRssSubscription = async ({
   isVerbose,
   stats,
   enqueueForChannel,
+  linkTransforms,
 }: CheckRssOptions): Promise<void> => {
   const fetched = await fetchRssSubscriptionItems({
     subscriptionUrl: subscription.url,
@@ -56,6 +58,7 @@ export const checkRssSubscription = async ({
     stats,
     enqueueForChannel,
     sourceIdentity: fetched.sourceIdentity,
+    linkTransforms,
   });
 
   markHealthSuccess(db, channelName, subscription.url);
