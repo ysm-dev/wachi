@@ -1,6 +1,6 @@
 {
   "name": "@wachi-cli/linux-arm64",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": false,
   "os": [
     "linux"
