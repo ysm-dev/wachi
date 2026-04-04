@@ -114,9 +114,13 @@ const sortOldestFirst = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
   });
 };
 
+const sanitizeInvalidDates = (xml: string): string => {
+  return xml.replace(/<(updated|published|pubDate|dc:date)>\s*null\s*<\/\1>/gi, "<$1></$1>");
+};
+
 export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promise<ParsedFeed> => {
   const parser = new Parser();
-  const feed = await parser.parseString(xml);
+  const feed = await parser.parseString(sanitizeInvalidDates(xml));
 
   const items = feed.items.map((item) => {
     const link = item.link ?? item.guid ?? subscriptionUrl;
