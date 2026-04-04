@@ -13,6 +13,7 @@ export const getEnv = () => {
     configPath: readEnv("WACHI_CONFIG_PATH"),
     dbPath: readEnv("WACHI_DB_PATH"),
     pathsRoot: readEnv("WACHI_PATHS_ROOT"),
+    wrapperPath: readEnv("WACHI_WRAPPER_PATH"),
     noAutoUpdate: readEnv("WACHI_NO_AUTO_UPDATE") === "1",
   };
 };

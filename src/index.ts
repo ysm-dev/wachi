@@ -9,6 +9,7 @@ import { upgradeCommand } from "./commands/upgrade.ts";
 import { versionCommand } from "./commands/version.ts";
 import { printStdout } from "./lib/cli/io.ts";
 import { applyPendingAutoUpdate } from "./lib/update/apply.ts";
+import { stageAutoUpdateIfNeeded } from "./lib/update/check.ts";
 import { VERSION } from "./version.ts";
 
 const main = defineCommand({
@@ -54,6 +55,10 @@ const main = defineCommand({
 });
 
 await applyPendingAutoUpdate().catch(() => {
+  return;
+});
+
+await stageAutoUpdateIfNeeded().catch(() => {
   return;
 });
 

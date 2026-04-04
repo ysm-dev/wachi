@@ -65,6 +65,16 @@ export const getPendingUpdatePath = (): string => {
   return join(paths.cache, "wachi-new");
 };
 
+export const getPendingUpdateStatePath = (): string => {
+  const paths = getWachiPaths();
+  return join(paths.cache, "update-state.json");
+};
+
+export const getPendingUpdateScriptPath = (): string => {
+  const paths = getWachiPaths();
+  return join(paths.cache, "apply-update.ps1");
+};
+
 export const ensureParentDir = async (filePath: string): Promise<void> => {
   await mkdir(dirname(filePath), { recursive: true });
 };

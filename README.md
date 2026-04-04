@@ -16,16 +16,19 @@ wachi monitors RSS feeds for new content and pushes notifications to 90+ service
 ## Install
 
 ```bash
-# npm / bun
-npx wachi --help
-bunx wachi --help
+# ephemeral run
+npx wachi@latest --help
+bunx wachi@latest --help
 
-# or install globally
+# persistent global install
 npm i -g wachi
-bun i -g wachi
+bun install -g wachi
 
-# shell script
+# standalone binary (macOS/Linux)
 curl -fsSL https://raw.githubusercontent.com/ysm-dev/wachi/main/install.sh | sh
+
+# standalone binary (Windows PowerShell)
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/ysm-dev/wachi/main/install.ps1 | iex"
 
 # homebrew
 brew tap ysm-dev/tap && brew install wachi
@@ -76,8 +79,17 @@ wachi check                       Check all subscriptions for changes
 
 wachi test -n <name>              Send a test notification
 
-wachi upgrade                     Update wachi to latest version
+wachi upgrade                     Update a persistent wachi install
 ```
+
+`wachi upgrade` follows the original install method:
+
+- npm global -> `npm install -g wachi@latest`
+- bun global -> `bun install -g wachi@latest`
+- Homebrew -> `brew upgrade wachi`
+- standalone binary -> downloads the latest GitHub Release and replaces the current binary
+
+Ephemeral runs via `npx` and `bunx` are not persistent installs, so they are not upgraded in place. Re-run them with `@latest` instead.
 
 **Global flags:** `--json` / `-j` for machine-readable output, `--verbose` / `-V` for detailed logs, `--config` / `-C` for custom config path.
 

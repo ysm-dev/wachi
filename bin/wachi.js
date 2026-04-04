@@ -17,10 +17,15 @@ const key = `${process.platform}-${process.arch}`;
 const packageName = PLATFORM_PACKAGE_MAP[key];
 const require = createRequire(import.meta.url);
 const args = process.argv.slice(2);
+const wrapperPath = fileURLToPath(import.meta.url);
 
 const runBinary = (binaryPath) => {
   const result = spawnSync(binaryPath, args, {
     stdio: "inherit",
+    env: {
+      ...process.env,
+      WACHI_WRAPPER_PATH: wrapperPath,
+    },
   });
 
   if (result.error) {
@@ -98,6 +103,10 @@ if (binaryPath) {
 if (existsSync(sourceEntry)) {
   const fallback = spawnSync(process.env.BUN_BINARY || "bun", ["run", sourceEntry, ...args], {
     stdio: "inherit",
+    env: {
+      ...process.env,
+      WACHI_WRAPPER_PATH: wrapperPath,
+    },
   });
 
   if (typeof fallback.status === "number") {

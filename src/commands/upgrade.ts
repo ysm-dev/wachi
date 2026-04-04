@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { z } from "zod";
 import { printJsonSuccess, printStdout } from "../lib/cli/io.ts";
 import { detectInstallMethod } from "../lib/update/detect-method.ts";
+import { upgradeStandaloneInstall } from "../lib/update/upgrade-standalone.ts";
 import { WachiError } from "../utils/error.ts";
 import {
   commandJson,
@@ -17,7 +18,17 @@ const upgradeArgsSchema = z.object({
 });
 
 const runAndRequireSuccess = async (command: string[]): Promise<void> => {
-  const proc = Bun.spawn(command, { stdout: "inherit", stderr: "inherit" });
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(command, { stdout: "inherit", stderr: "inherit", stdin: "inherit" });
+  } catch {
+    throw new WachiError(
+      "Upgrade command is unavailable",
+      `${command[0]} is not installed or could not be launched from this shell.`,
+      `Install ${command[0]} and try again, or upgrade wachi using the same tool you originally installed it with.`,
+    );
+  }
+
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     throw new WachiError(
@@ -39,24 +50,53 @@ export const upgradeCommand = defineCommand({
   run: async ({ args }) => {
     await runWithErrorHandling(args, async () => {
       const parsedArgs = parseCommandArgs(upgradeArgsSchema, args);
-      const method = detectInstallMethod(process.execPath);
+      const method = await detectInstallMethod();
+      let upgraded = true;
+      let version: string | undefined;
+      let status: string | undefined;
 
       if (method === "npm") {
-        await runAndRequireSuccess(["npm", "update", "-g", "wachi"]);
+        await runAndRequireSuccess(["npm", "install", "-g", "wachi@latest"]);
+      } else if (method === "bun") {
+        await runAndRequireSuccess(["bun", "install", "-g", "wachi@latest"]);
       } else if (method === "brew") {
         await runAndRequireSuccess(["brew", "upgrade", "wachi"]);
+      } else if (method === "standalone") {
+        const result = await upgradeStandaloneInstall();
+        upgraded = result.upgraded;
+        version = result.version;
+        status = result.status;
+      } else if (method === "npx" || method === "bunx") {
+        const runner = method === "npx" ? "npx" : "bunx";
+        throw new WachiError(
+          "Cannot upgrade an ephemeral install",
+          `${runner} runs wachi from a temporary cache instead of a persistent installation.`,
+          `Run ${runner} wachi@latest ... for the latest version, or install wachi globally before using wachi upgrade.`,
+        );
       } else {
         throw new WachiError(
-          "Automatic upgrade for standalone binary is not available in this build",
-          "The current executable appears to be a standalone binary.",
-          "Download the latest release binary from GitHub Releases and replace the current file.",
+          "Cannot upgrade a project-local install automatically",
+          "This wachi executable is running from a project node_modules directory.",
+          "Update the dependency in that project with your package manager, then rerun the local binary.",
         );
       }
 
       if (commandJson(parsedArgs)) {
-        printJsonSuccess({ upgraded: true, method });
+        printJsonSuccess({ upgraded, method, version, status });
       } else {
-        printStdout(`Upgrade complete via ${method}.`);
+        if (method === "standalone") {
+          if (!upgraded) {
+            printStdout(`Already up to date (${version}).`);
+          } else if (status === "scheduled") {
+            printStdout(
+              `Upgrade to ${version} is scheduled and will finish after this process exits.`,
+            );
+          } else {
+            printStdout(`Upgrade complete via standalone binary (${version}).`);
+          }
+        } else {
+          printStdout(`Upgrade complete via ${method}.`);
+        }
       }
 
       return 0;

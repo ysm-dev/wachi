@@ -19,9 +19,9 @@ esac
 case "$OS" in
   darwin) TARGET="darwin-$ARCH" ;;
   linux) TARGET="linux-$ARCH" ;;
-  mingw*|msys*|cygwin*) TARGET="win32-$ARCH" ;;
   *)
-    echo "Unsupported OS: $OS" >&2
+    echo "Unsupported OS for install.sh: $OS" >&2
+    echo "Use install.ps1 on Windows." >&2
     exit 1
     ;;
 esac

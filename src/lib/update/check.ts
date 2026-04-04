@@ -1,63 +1,71 @@
+import { access } from "node:fs/promises";
 import { getEnv } from "../../utils/env.ts";
+import { getPendingUpdatePath } from "../../utils/paths.ts";
 import { VERSION } from "../../version.ts";
-import type { WachiDb } from "../db/connect.ts";
-import { getMetaValue } from "../db/get-meta-value.ts";
-import { setMetaValue } from "../db/set-meta-value.ts";
-import { http } from "../http/client.ts";
+import { detectInstallMethod } from "./detect-method.ts";
+import { downloadReleaseAsset } from "./download.ts";
+import { fetchLatestRelease } from "./release.ts";
+import { clearPendingUpdateState, readUpdateState, writeUpdateState } from "./state.ts";
+import { isNewerVersion } from "./version.ts";
 
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const UPDATE_CHECK_TIMEOUT_MS = 1_500;
+const ONE_DAY_MS = 24 * 60 * 60 * 1_000;
 
-const isNewerVersion = (current: string, latest: string): boolean => {
-  const currentParts = current.split(".").map((part) => Number(part));
-  const latestParts = latest.split(".").map((part) => Number(part));
-
-  const maxLength = Math.max(currentParts.length, latestParts.length);
-  for (let index = 0; index < maxLength; index += 1) {
-    const currentPart = currentParts[index] ?? 0;
-    const latestPart = latestParts[index] ?? 0;
-    if (latestPart > currentPart) {
-      return true;
-    }
-    if (latestPart < currentPart) {
-      return false;
-    }
+const fileExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
   }
-  return false;
 };
 
-export const checkForUpdate = async (db: WachiDb): Promise<string | null> => {
+export const stageAutoUpdateIfNeeded = async (
+  fetchFn: typeof fetch = globalThis.fetch,
+  now = Date.now(),
+): Promise<void> => {
   const env = getEnv();
   if (env.noAutoUpdate) {
-    return null;
+    return;
   }
 
-  const lastCheckRaw = getMetaValue(db, "last_update_check");
-  if (lastCheckRaw) {
-    const lastCheck = Date.parse(lastCheckRaw);
-    if (!Number.isNaN(lastCheck) && Date.now() - lastCheck < ONE_DAY_MS) {
-      return null;
+  if ((await detectInstallMethod()) !== "standalone") {
+    return;
+  }
+
+  const state = await readUpdateState();
+  if (state.lastCheckedAt) {
+    const lastCheckedAt = Date.parse(state.lastCheckedAt);
+    if (!Number.isNaN(lastCheckedAt) && now - lastCheckedAt < ONE_DAY_MS) {
+      return;
     }
   }
 
-  setMetaValue(db, "last_update_check", new Date().toISOString());
-
-  try {
-    const latestInfo = await http<{ version?: string }>("https://registry.npmjs.org/wachi/latest", {
-      retry: 0,
-      timeout: UPDATE_CHECK_TIMEOUT_MS,
-    });
-    const latestVersion = latestInfo.version;
-    if (!latestVersion) {
-      return null;
-    }
-
-    if (isNewerVersion(VERSION, latestVersion)) {
-      return latestVersion;
-    }
-  } catch {
-    return null;
+  const latestRelease = await fetchLatestRelease(fetchFn);
+  const checkedAt = new Date(now).toISOString();
+  if (!isNewerVersion(VERSION, latestRelease.version)) {
+    await clearPendingUpdateState();
+    await writeUpdateState({ lastCheckedAt: checkedAt });
+    return;
   }
 
-  return null;
+  const pendingPath = getPendingUpdatePath();
+  const pending = state.pending;
+  const updateAlreadyStaged = pending
+    ? pending.version === latestRelease.version &&
+      pending.targetPath === process.execPath &&
+      (await fileExists(pendingPath))
+    : false;
+
+  if (!updateAlreadyStaged) {
+    await downloadReleaseAsset(latestRelease.downloadUrl, pendingPath, fetchFn);
+  }
+
+  await writeUpdateState({
+    lastCheckedAt: checkedAt,
+    pending: {
+      version: latestRelease.version,
+      assetName: latestRelease.assetName,
+      targetPath: process.execPath,
+    },
+  });
 };

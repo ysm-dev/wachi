@@ -10,6 +10,8 @@ import {
   getDefaultJsoncConfigPath,
   getLegacyNodejsDbPath,
   getPendingUpdatePath,
+  getPendingUpdateScriptPath,
+  getPendingUpdateStatePath,
 } from "../../../src/utils/paths.ts";
 
 const envSnapshot = {
@@ -54,6 +56,8 @@ describe("paths", () => {
     expect(getDefaultJsonConfigPath().endsWith("config.json")).toBe(true);
     expect(getDefaultDbPath().endsWith("wachi.db")).toBe(true);
     expect(getPendingUpdatePath().endsWith("wachi-new")).toBe(true);
+    expect(getPendingUpdateStatePath().endsWith("update-state.json")).toBe(true);
+    expect(getPendingUpdateScriptPath().endsWith("apply-update.ps1")).toBe(true);
   });
 
   it("derives legacy nodejs db path", () => {

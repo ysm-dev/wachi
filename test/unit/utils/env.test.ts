@@ -5,6 +5,7 @@ const keys = [
   "WACHI_APPRISE_URL",
   "WACHI_CONFIG_PATH",
   "WACHI_DB_PATH",
+  "WACHI_WRAPPER_PATH",
   "WACHI_NO_AUTO_UPDATE",
 ] as const;
 
@@ -29,12 +30,14 @@ describe("getEnv", () => {
     process.env.WACHI_APPRISE_URL = " slack://token/channel ";
     process.env.WACHI_CONFIG_PATH = " /tmp/config.yml ";
     process.env.WACHI_DB_PATH = " /tmp/wachi.db ";
+    process.env.WACHI_WRAPPER_PATH = " /tmp/node_modules/wachi/bin/wachi.js ";
     process.env.WACHI_NO_AUTO_UPDATE = "1";
 
     const env = getEnv();
     expect(env.appriseUrlOverride).toBe("slack://token/channel");
     expect(env.configPath).toBe("/tmp/config.yml");
     expect(env.dbPath).toBe("/tmp/wachi.db");
+    expect(env.wrapperPath).toBe("/tmp/node_modules/wachi/bin/wachi.js");
     expect(env.noAutoUpdate).toBe(true);
   });
 

@@ -1,12 +1,11 @@
 import pLimit from "p-limit";
 import { z } from "zod";
 import { getEnv } from "../../utils/env.ts";
-import { printJsonSuccess, printStderr, printStdout } from "../cli/io.ts";
+import { printJsonSuccess, printStdout } from "../cli/io.ts";
 import { toChannelNameKey } from "../config/channel-name-key.ts";
 import { readConfig } from "../config/read.ts";
 import { cleanupSentItems } from "../db/cleanup-sent-items.ts";
 import { connectDb } from "../db/connect.ts";
-import { checkForUpdate } from "../update/check.ts";
 import type { CheckStats } from "./handle-items.ts";
 import { processSubscriptionCheck } from "./process-subscription.ts";
 
@@ -75,8 +74,6 @@ export const runCheck = async ({
   const env = getEnv();
 
   try {
-    const updateCheck = checkForUpdate(db);
-
     cleanupSentItems(
       db,
       configState.config.cleanup.ttl_days,
@@ -117,10 +114,6 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
-    const latestVersion = await updateCheck;
-    if (latestVersion && !isJson) {
-      printStderr(`Update available: ${latestVersion}`);
-    }
     printFinalSummary(stats, dryRun, isJson);
     return resolveExitCode(stats);
   } finally {

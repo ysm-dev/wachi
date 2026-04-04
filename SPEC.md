@@ -574,16 +574,19 @@ When `wachi check` runs:
 
 ## Auto-Update
 
-On every command invocation (with 24h cooldown):
+Standalone binary installs auto-update on command startup with a 24h cooldown:
 
-1. Check `meta` table for `last_update_check` timestamp
-2. If less than 24h since last check: skip
-3. Otherwise: fetch latest version from npm registry (non-blocking)
-4. If new version available: download compiled binary to `~/.cache/wachi/wachi-new`
-5. Update `last_update_check` timestamp in meta table
-6. On the NEXT invocation: at startup, detect pending update file, rename old binary to backup, rename new binary to current path, then re-exec
+1. Detect whether the current executable is a standalone binary install
+2. Read updater state from `~/.cache/wachi/update-state.json`
+3. If less than 24h since the last check: skip
+4. Otherwise: fetch the latest GitHub Release metadata for the current platform/arch
+5. If a newer version exists: download the compiled binary to `~/.cache/wachi/wachi-new` and record pending update metadata
+6. On the NEXT invocation: at startup, detect the pending update and replace the current binary
+7. On Windows, where a running `.exe` cannot replace itself directly, spawn a helper PowerShell process that swaps binaries after the current process exits
 
-This is a **two-phase update**: download happens in the background, replacement happens at the start of the next invocation (when the binary is not yet running).
+This is a **two-phase update**: download happens on one invocation, replacement happens on a later invocation.
+
+Package-manager installs (`npm`, `bun`, `brew`) are **not** auto-updated by wachi. Those are upgraded explicitly through their original package manager.
 
 Disabled with `WACHI_NO_AUTO_UPDATE=1` environment variable.
 
@@ -591,11 +594,13 @@ Disabled with `WACHI_NO_AUTO_UPDATE=1` environment variable.
 
 Manual update command. Detects install method from binary location:
 
-- In `node_modules` path -> `npm update -g wachi` or `bun update -g wachi`
-- In homebrew cellar -> `brew upgrade wachi`
-- Standalone binary -> download from GitHub Releases and replace
+- npm global install -> `npm install -g wachi@latest`
+- bun global install -> `bun install -g wachi@latest`
+- Homebrew install -> `brew upgrade wachi`
+- Standalone binary -> download from GitHub Releases and replace the current binary
+- `npx`, `bunx`, and project-local installs -> error with exact instructions for rerunning with `@latest` or upgrading the project dependency
 
-Fetches latest version and replaces the binary regardless of cooldown.
+For standalone binaries, `wachi upgrade` ignores the auto-update cooldown and upgrades immediately.
 
 ### Version Number
 
@@ -727,7 +732,15 @@ npm install -g wachi
 curl -fsSL https://raw.githubusercontent.com/ysm-dev/wachi/main/install.sh | sh
 ```
 
-Downloads the correct compiled binary from GitHub Releases based on platform/arch.
+Downloads the correct compiled binary from GitHub Releases on macOS/Linux.
+
+### PowerShell installer (Windows)
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/ysm-dev/wachi/main/install.ps1 | iex"
+```
+
+Downloads the latest Windows binary from GitHub Releases into a per-user install directory.
 
 ### Homebrew
 
