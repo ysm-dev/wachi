@@ -3,7 +3,12 @@ import { access, rm } from "node:fs/promises";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { getEnv } from "../../utils/env.ts";
 import { WachiError } from "../../utils/error.ts";
-import { ensureParentDir, getDefaultDbPath, getLegacyNodejsDbPath } from "../../utils/paths.ts";
+import {
+  ensureParentDir,
+  getDefaultDbPath,
+  getLegacyMacOsDbPath,
+  getLegacyNodejsDbPath,
+} from "../../utils/paths.ts";
 import { generatedMigrations } from "./generated-migrations.ts";
 import { dbSchema } from "./schema.ts";
 
@@ -55,22 +60,35 @@ const exportLegacyDb = (legacyDbPath: string, canonicalDbPath: string): void => 
   }
 };
 
-const migrateLegacyDbIfNeeded = async (canonicalDbPath: string): Promise<string> => {
-  if (await pathExists(canonicalDbPath)) {
-    return canonicalDbPath;
-  }
-
-  const legacyDbPath = getLegacyNodejsDbPath();
+const tryMigrateLegacyDb = async (
+  canonicalDbPath: string,
+  legacyDbPath: string,
+  label: string,
+): Promise<boolean> => {
   if (!(await pathExists(legacyDbPath))) {
-    return canonicalDbPath;
+    return false;
   }
 
   await ensureParentDir(canonicalDbPath);
   exportLegacyDb(legacyDbPath, canonicalDbPath);
   await removeDbFiles(legacyDbPath);
-  process.stderr.write(
-    `Warning: Migrated database from legacy runtime path to ${canonicalDbPath}.\n`,
-  );
+  process.stderr.write(`Migrated database (${label}): ${legacyDbPath} -> ${canonicalDbPath}\n`);
+  return true;
+};
+
+const migrateLegacyDbIfNeeded = async (canonicalDbPath: string): Promise<string> => {
+  if (await pathExists(canonicalDbPath)) {
+    return canonicalDbPath;
+  }
+
+  const env = getEnv();
+  if (process.platform === "darwin" && !env.pathsRoot && !env.dbPath) {
+    if (await tryMigrateLegacyDb(canonicalDbPath, getLegacyMacOsDbPath(), "macOS native")) {
+      return canonicalDbPath;
+    }
+  }
+
+  await tryMigrateLegacyDb(canonicalDbPath, getLegacyNodejsDbPath(), "legacy runtime");
   return canonicalDbPath;
 };
 

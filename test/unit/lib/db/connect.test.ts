@@ -10,6 +10,7 @@ const envModulePath = new URL("../../../../src/utils/env.ts", import.meta.url).p
 
 let canonicalDbPath = "";
 let legacyDbPath = "";
+let legacyMacOsDbPath = "";
 let envDbPath: string | undefined;
 
 mock.module(pathsModulePath, () => ({
@@ -18,6 +19,7 @@ mock.module(pathsModulePath, () => ({
   },
   getDefaultDbPath: () => canonicalDbPath,
   getLegacyNodejsDbPath: () => legacyDbPath,
+  getLegacyMacOsDbPath: () => legacyMacOsDbPath,
 }));
 
 mock.module(envModulePath, () => ({
@@ -43,6 +45,7 @@ beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "wachi-db-connect-"));
   canonicalDbPath = join(tempDir, "canonical", "wachi.db");
   legacyDbPath = join(tempDir, "legacy", "wachi.db");
+  legacyMacOsDbPath = join(tempDir, "macos-native", "wachi.db");
   envDbPath = undefined;
   connection = null;
 });
@@ -127,7 +130,7 @@ describe("connectDb", () => {
     const rows = connection.db.select().from(sentItems).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.title).toBe("Legacy");
-    expect(stderr).toContain("Migrated database from legacy runtime path");
+    expect(stderr).toContain("Migrated database (legacy runtime)");
     expect(await pathExists(legacyDbPath)).toBe(false);
   });
 

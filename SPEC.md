@@ -98,7 +98,7 @@ cleanup:
 | RSS parsing | rss-parser | Most popular Node RSS parser, handles RSS 2.0 + Atom |
 | Notifications | apprise (via uvx) | 90+ notification services, zero code needed |
 | Config | YAML (default) + JSON | Human-readable, editable. Uses `yaml` package (round-trip to preserve comments) |
-| Path resolution | env-paths | XDG-compliant paths for data, config, cache across platforms |
+| Path resolution | XDG (built-in) | XDG-standard paths for data, config, cache across platforms |
 
 ## CLI Design
 
@@ -295,7 +295,7 @@ Test notification sent to main (slack://xoxb-.../channel)
 
 ### Config File
 
-Located via `env-paths` (XDG-compliant): `~/.config/wachi/config.yml` on macOS/Linux.
+Located at `~/.config/wachi/config.yml` (XDG standard, all platforms). On first run, existing configs are auto-migrated from legacy macOS paths (`~/Library/Preferences/wachi/`).
 
 Config file is created with `0600` permissions (owner read/write only) to protect apprise URLs containing tokens/secrets.
 
@@ -359,7 +359,7 @@ Transforms apply only to notification body links. Dedup hashes always use the or
 
 ### SQLite Database
 
-Located via `env-paths`: `~/.local/share/wachi/wachi.db` (XDG data dir).
+Located at `~/.local/share/wachi/wachi.db` (XDG data dir). On first run, existing databases are auto-migrated from legacy macOS paths (`~/Library/Application Support/wachi/`).
 
 Uses **WAL mode** for safe concurrent reads (cron check running while user runs sub).
 
@@ -811,7 +811,7 @@ wachi/
         detect-method.ts        # Detect install method from binary location
     utils/
       hash.ts                   # SHA-256 hashing
-      paths.ts                  # env-paths wrapper
+      paths.ts                  # XDG path resolution with legacy macOS migration
       env.ts                    # Environment variable accessors
       error.ts                  # WachiError class (what/why/fix pattern)
   test/
@@ -892,7 +892,7 @@ All dependencies are installed with `bun i` (never manually edit package.json).
 | `ofetch` | HTTP client with retry/timeout |
 | `p-limit` | Concurrency limiter |
 | `yaml` | YAML config read/write (round-trip with comment preservation) |
-| `env-paths` | XDG-compliant path resolution |
+| ~~`env-paths`~~ | Removed; XDG paths computed directly |
 
 ### External CLI Tools (subprocess)
 
@@ -981,7 +981,7 @@ crontab -e
 ## Implementation Plan
 
 1. Project scaffolding (`bun i` all deps, tsconfig.json, biome.json, knip.json, directory structure)
-2. Utils layer (env-paths, env vars, SHA-256 hashing, WachiError)
+2. Utils layer (XDG paths, env vars, SHA-256 hashing, WachiError)
 3. URL utils (normalize, resolve, validate)
 4. Config layer (zod schemas, YAML/JSON round-trip read/write, 0600 permissions, atomic write, validation)
 5. Database layer (drizzle schema, drizzle-zod types, bun:sqlite WAL, CREATE TABLE IF NOT EXISTS, corruption recovery, dedup + cleanup operations)

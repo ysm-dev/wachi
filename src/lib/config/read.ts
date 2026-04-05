@@ -1,14 +1,17 @@
-import { access, readFile } from "node:fs/promises";
+import { access, copyFile, readFile, rm } from "node:fs/promises";
 import { extname } from "node:path";
 import { type ParseError, parse as parseJson, printParseErrorCode } from "jsonc-parser";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 import { fromError } from "zod-validation-error";
+import { getEnv } from "../../utils/env.ts";
 import { WachiError } from "../../utils/error.ts";
 import {
+  ensureParentDir,
   getDefaultConfigPath,
   getDefaultJsonConfigPath,
   getDefaultJsoncConfigPath,
+  getLegacyMacOsConfigPath,
 } from "../../utils/paths.ts";
 import { applyConfigDefaults, type UserConfig, userConfigSchema } from "./schema.ts";
 
@@ -116,7 +119,37 @@ const parseConfigContent = (content: string, format: ConfigFormat): unknown => {
   return parsed ?? {};
 };
 
+const migrateLegacyMacOsConfig = async (): Promise<void> => {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const env = getEnv();
+  if (env.pathsRoot || env.configPath) {
+    return;
+  }
+
+  const canonicalPath = getDefaultConfigPath();
+  if (await pathExists(canonicalPath)) {
+    return;
+  }
+
+  const legacyPath = getLegacyMacOsConfigPath();
+  if (!(await pathExists(legacyPath))) {
+    return;
+  }
+
+  await ensureParentDir(canonicalPath);
+  await copyFile(legacyPath, canonicalPath);
+  await rm(legacyPath, { force: true });
+  process.stderr.write(`Migrated config: ${legacyPath} -> ${canonicalPath}\n`);
+};
+
 export const readConfig = async (configPathOverride?: string): Promise<ReadConfigResult> => {
+  if (!configPathOverride) {
+    await migrateLegacyMacOsConfig();
+  }
+
   const requestedPath = configPathOverride ?? getDefaultConfigPath();
   const yamlPath = getDefaultConfigPath();
   const jsoncPath = getDefaultJsoncConfigPath();
