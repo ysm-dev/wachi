@@ -23,6 +23,7 @@ const checkStatsSchema = z.object({
   sent: z.array(sentRecordSchema),
   skipped: z.number(),
   errors: z.array(z.string()),
+  networkSkipped: z.number(),
 });
 
 export type CheckStats = z.infer<typeof checkStatsSchema>;
@@ -123,7 +124,8 @@ export const handleSubscriptionItems = async ({
       }
     } catch (error) {
       deleteDedupRecord(db, dedupHash);
-      stats.errors.push(error instanceof Error ? error.message : "notification failed");
+      const reason = error instanceof Error ? error.message : "notification delivery failed";
+      stats.errors.push(`${subscriptionUrl}: ${reason}`);
 
       const remaining = items.length - index - 1;
       if (remaining > 0 && isVerbose) {

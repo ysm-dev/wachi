@@ -50,6 +50,7 @@ export const processSubscriptionCheck = async ({
     });
   } catch (error) {
     if (isNetworkLevelError(error) && !(await isNetworkAvailable())) {
+      stats.networkSkipped += 1;
       return;
     }
 

@@ -1,6 +1,7 @@
 import { chmod, rename, writeFile } from "node:fs/promises";
 import { stringify } from "yaml";
 import { z } from "zod";
+import { fromError } from "zod-validation-error";
 import { WachiError } from "../../utils/error.ts";
 import { ensureParentDir } from "../../utils/paths.ts";
 import { type UserConfig, userConfigSchema } from "./schema.ts";
@@ -24,10 +25,12 @@ const toConfigText = (config: UserConfig, format: "yaml" | "json" | "jsonc"): st
 export const writeConfig = async ({ config, path, format }: WriteConfigOptions): Promise<void> => {
   const validated = userConfigSchema.safeParse(config);
   if (!validated.success) {
+    const firstIssue = validated.error.issues[0];
+    const failedPath = firstIssue ? firstIssue.path.join(".") : "unknown path";
     throw new WachiError(
-      "Refusing to write invalid config",
-      "Config content does not satisfy the schema.",
-      "Validate the config object before writing.",
+      `Refusing to write invalid config (failed at ${failedPath})`,
+      fromError(validated.error).toString(),
+      `Fix the value at "${failedPath}" and try again.`,
     );
   }
 

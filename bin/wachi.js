@@ -42,7 +42,11 @@ const runBinary = (binaryPath) => {
   }
 
   if (typeof result.signal === "string") {
-    process.stderr.write(`Error: wachi binary terminated by signal ${result.signal}.\n`);
+    process.stderr.write(
+      `Error: wachi binary terminated by signal ${result.signal}.\n` +
+        "The process was killed externally (e.g. by the OS, another process, or resource limits).\n" +
+        "Try running the command again. If it persists, check system resource usage or try reinstalling wachi.\n",
+    );
   }
 
   process.exit(1);
@@ -122,7 +126,9 @@ if (existsSync(sourceEntry)) {
 if (!packageName) {
   process.stderr.write(
     `Error: Unsupported platform for prebuilt binaries (${key}).\n` +
-      "The published wachi package is binary-only.\n",
+      "The published wachi package is binary-only.\n" +
+      `Supported platforms: ${Object.keys(PLATFORM_PACKAGE_MAP).join(", ")}.\n` +
+      "Install from source with Bun, or use a supported platform.\n",
   );
   process.exit(1);
 }

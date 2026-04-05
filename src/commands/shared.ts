@@ -61,9 +61,10 @@ export const parseCommandArgs = <TSchema extends z.ZodTypeAny>(
 
   const issue = parsed.error.issues[0];
   const path = issue?.path.join(".") || "unknown";
+  const reason = issue?.message ?? "Invalid value";
   throw new WachiError(
     "Invalid command arguments",
-    `Argument validation failed at ${path}.`,
+    `Argument validation failed at "${path}": ${reason}.`,
     "Run the command with --help to see valid argument syntax.",
   );
 };

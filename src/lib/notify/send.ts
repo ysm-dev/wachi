@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { WachiError } from "../../utils/error.ts";
+import { maskAppriseUrl } from "../cli/io.ts";
 import { ensureUvx } from "./install-uv.ts";
 import { personalizeAppriseUrl, sourceIdentitySchema } from "./source-identity.ts";
 
@@ -51,7 +52,7 @@ export const sendNotification = async ({
       proc.kill();
       reject(
         new WachiError(
-          `Failed to send notification to ${appriseUrl}`,
+          `Failed to send notification to ${maskAppriseUrl(appriseUrl)}`,
           `apprise timed out after ${Math.ceil(timeoutMs / 1_000)} seconds.`,
           "Check network connectivity and apprise service health, then try again.",
         ),
@@ -66,7 +67,7 @@ export const sendNotification = async ({
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();
     throw new WachiError(
-      `Failed to send notification to ${appriseUrl}`,
+      `Failed to send notification to ${maskAppriseUrl(appriseUrl)}`,
       stderr.trim() || "uvx apprise exited with an error.",
       "Verify the channel with `wachi test -n <name>`.",
     );

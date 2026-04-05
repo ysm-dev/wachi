@@ -64,7 +64,7 @@ const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>):
   await task();
 };
 
-const makeStats = (): CheckStats => ({ sent: [], skipped: 0, errors: [] });
+const makeStats = (): CheckStats => ({ sent: [], skipped: 0, errors: [], networkSkipped: 0 });
 
 describe("handleSubscriptionItems with linkTransforms", () => {
   it("sends notification body with transformed link", async () => {

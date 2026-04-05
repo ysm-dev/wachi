@@ -6,6 +6,15 @@ type EnsureUvxOptions = {
   spawn?: SpawnFn;
 };
 
+const collectStderr = async (proc: { stderr?: ReadableStream | null }): Promise<string> => {
+  try {
+    if (!proc.stderr) return "";
+    return (await new Response(proc.stderr).text()).trim();
+  } catch {
+    return "";
+  }
+};
+
 const installUv = async (platform: NodeJS.Platform, spawn: SpawnFn): Promise<void> => {
   if (platform === "win32") {
     const proc = spawn([
@@ -16,9 +25,10 @@ const installUv = async (platform: NodeJS.Platform, spawn: SpawnFn): Promise<voi
       "irm https://astral.sh/uv/install.ps1 | iex",
     ]);
     if ((await proc.exited) !== 0) {
+      const stderr = await collectStderr(proc);
       throw new WachiError(
         "Failed to install uv",
-        "PowerShell installer exited with an error.",
+        stderr || "PowerShell installer exited with an error.",
         "Install uv manually from https://docs.astral.sh/uv/ and retry.",
       );
     }
@@ -27,9 +37,10 @@ const installUv = async (platform: NodeJS.Platform, spawn: SpawnFn): Promise<voi
 
   const proc = spawn(["sh", "-lc", "curl -LsSf https://astral.sh/uv/install.sh | sh"]);
   if ((await proc.exited) !== 0) {
+    const stderr = await collectStderr(proc);
     throw new WachiError(
       "Failed to install uv",
-      "Shell installer exited with an error.",
+      stderr || "Shell installer exited with an error.",
       "Install uv manually from https://docs.astral.sh/uv/ and retry.",
     );
   }

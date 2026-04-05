@@ -37,7 +37,12 @@ const createChannelQueue = () => {
 
 const printFinalSummary = (stats: CheckStats, dryRun: boolean, isJson: boolean): void => {
   if (isJson) {
-    printJsonSuccess({ sent: stats.sent, skipped: stats.skipped, errors: stats.errors });
+    printJsonSuccess({
+      sent: stats.sent,
+      skipped: stats.skipped,
+      errors: stats.errors,
+      network_skipped: stats.networkSkipped,
+    });
     return;
   }
 
@@ -46,9 +51,15 @@ const printFinalSummary = (stats: CheckStats, dryRun: boolean, isJson: boolean):
     return;
   }
 
-  printStdout(
-    `${stats.sent.length} new, ${stats.skipped} unchanged, ${stats.errors.length} errors`,
-  );
+  const parts = [
+    `${stats.sent.length} new`,
+    `${stats.skipped} unchanged`,
+    `${stats.errors.length} errors`,
+  ];
+  if (stats.networkSkipped > 0) {
+    parts.push(`${stats.networkSkipped} skipped (network unavailable)`);
+  }
+  printStdout(parts.join(", "));
 };
 
 const resolveExitCode = (stats: CheckStats): number => {
@@ -86,7 +97,7 @@ export const runCheck = async ({
         )
       : configState.config.channels;
 
-    const stats: CheckStats = { sent: [], skipped: 0, errors: [] };
+    const stats: CheckStats = { sent: [], skipped: 0, errors: [], networkSkipped: 0 };
     const limit = pLimit(Math.max(1, concurrency));
     const enqueueForChannel = createChannelQueue();
     const tasks: Array<Promise<void>> = [];
