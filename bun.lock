@@ -23,32 +23,32 @@
         "zod-validation-error": "5.0.0",
       },
       "optionalDependencies": {
-        "@wachi-cli/darwin-arm64": "0.3.2",
-        "@wachi-cli/darwin-x64": "0.3.2",
-        "@wachi-cli/linux-arm64": "0.3.2",
-        "@wachi-cli/linux-x64": "0.3.2",
-        "@wachi-cli/win32-x64": "0.3.2",
+        "@wachi-cli/darwin-arm64": "0.3.4",
+        "@wachi-cli/darwin-x64": "0.3.4",
+        "@wachi-cli/linux-arm64": "0.3.4",
+        "@wachi-cli/linux-x64": "0.3.4",
+        "@wachi-cli/win32-x64": "0.3.4",
       },
     },
     "packages/darwin-arm64": {
       "name": "@wachi-cli/darwin-arm64",
-      "version": "0.3.2",
+      "version": "0.3.4",
     },
     "packages/darwin-x64": {
       "name": "@wachi-cli/darwin-x64",
-      "version": "0.3.2",
+      "version": "0.3.4",
     },
     "packages/linux-arm64": {
       "name": "@wachi-cli/linux-arm64",
-      "version": "0.3.2",
+      "version": "0.3.4",
     },
     "packages/linux-x64": {
       "name": "@wachi-cli/linux-x64",
-      "version": "0.3.2",
+      "version": "0.3.4",
     },
     "packages/win32-x64": {
       "name": "@wachi-cli/win32-x64",
-      "version": "0.3.2",
+      "version": "0.3.4",
     },
   },
   "packages": {
