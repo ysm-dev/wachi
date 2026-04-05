@@ -173,11 +173,12 @@ export const subCommand = defineCommand({
       let baselineCount = 0;
       if (!sendExisting) {
         const { sqlite, db } = await connectDb();
+        const itemsToSeed = prepared.baselineItems.slice(0, -1);
         baselineCount = seedDedupRecords(
           db,
           channelIdentity,
           prepared.subscription.url,
-          prepared.baselineItems,
+          itemsToSeed,
         );
         sqlite.close();
       }

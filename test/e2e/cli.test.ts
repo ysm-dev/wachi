@@ -96,9 +96,10 @@ describe("wachi CLI", () => {
     expect(sub.exitCode).toBe(0);
     expect(sub.stdout).toContain("Subscribed (RSS)");
 
-    const dryRunNoNew = await runCli(["check", "--dry-run", "--config", configPath], baseEnv);
-    expect(dryRunNoNew.exitCode).toBe(0);
-    expect(dryRunNoNew.stdout).toContain("[dry-run] 0 items would be sent");
+    const dryRunLatest = await runCli(["check", "--dry-run", "--config", configPath], baseEnv);
+    expect(dryRunLatest.exitCode).toBe(0);
+    expect(dryRunLatest.stdout).toContain("would send: Item 1");
+    expect(dryRunLatest.stdout).toContain("[dry-run] 1 items would be sent");
 
     feedXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel><title>Test Feed</title>
