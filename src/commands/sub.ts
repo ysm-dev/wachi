@@ -11,6 +11,7 @@ import { formatNotificationBody } from "../lib/notify/format.ts";
 import { sendNotification } from "../lib/notify/send.ts";
 import { normalizeAppriseUrlForIdentity } from "../lib/notify/source-identity.ts";
 import { prepareSubscription } from "../lib/subscriptions/prepare-subscription.ts";
+import { resolveSourceIdentity } from "../lib/subscriptions/resolve-source-identity.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
 import { validateAppriseUrl, validateReachableUrl } from "../lib/url/validate.ts";
 import { WachiError } from "../utils/error.ts";
@@ -70,7 +71,11 @@ export const subCommand = defineCommand({
       description: "Skip baseline and send all current items on next check",
       default: false,
     },
-    url: { type: "positional", required: true, description: "Subscription URL" },
+    url: {
+      type: "positional",
+      required: true,
+      description: "Subscription URL",
+    },
   },
   run: async ({ args }) => {
     await runWithErrorHandling(args, async () => {
@@ -187,7 +192,15 @@ export const subCommand = defineCommand({
         if (latestItem) {
           try {
             const body = formatNotificationBody(latestItem.link, latestItem.title);
-            await sendNotification({ appriseUrl: channelAppriseUrl, body });
+            const sourceIdentity = await resolveSourceIdentity({
+              subscriptionUrl: prepared.subscription.url,
+              rssUrl: prepared.subscription.rss_url,
+            });
+            await sendNotification({
+              appriseUrl: channelAppriseUrl,
+              body,
+              sourceIdentity,
+            });
             if (!isJson) {
               printStdout(`Sent: ${latestItem.title}`);
             }

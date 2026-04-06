@@ -3,6 +3,7 @@ import type { SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { markHealthFailure } from "../db/mark-health-failure.ts";
 import { sendNotification } from "../notify/send.ts";
+import { resolveSourceIdentity } from "../subscriptions/resolve-source-identity.ts";
 import type { CheckStats } from "./handle-items.ts";
 
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
@@ -22,12 +23,13 @@ type HandleFailureOptions = z.infer<typeof handleFailureOptionsSchema>;
 
 const maybeSendFailureAlert = async (
   failures: number,
-  subscriptionUrl: string,
+  subscription: SubscriptionConfig,
   message: string,
   channelName: string,
   effectiveChannelUrl: string,
   dryRun: boolean,
   enqueueForChannel: QueueFn,
+  db: WachiDb,
 ): Promise<void> => {
   const isMilestone = failures > 10 && failures % 100 === 0;
   if (!(failures === 3 || failures === 10 || isMilestone) || dryRun) {
@@ -36,12 +38,22 @@ const maybeSendFailureAlert = async (
 
   const body =
     failures === 3
-      ? `wachi: subscription ${subscriptionUrl} has failed 3 consecutive checks. Last error: ${message}`
-      : `wachi: subscription ${subscriptionUrl} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
+      ? `wachi: subscription ${subscription.url} has failed 3 consecutive checks. Last error: ${message}`
+      : `wachi: subscription ${subscription.url} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
 
   try {
+    const sourceIdentity = await resolveSourceIdentity({
+      subscriptionUrl: subscription.url,
+      rssUrl: subscription.rss_url,
+      db,
+      allowFeedFetch: false,
+    });
     await enqueueForChannel(effectiveChannelUrl, async () => {
-      await sendNotification({ appriseUrl: effectiveChannelUrl, body });
+      await sendNotification({
+        appriseUrl: effectiveChannelUrl,
+        body,
+        sourceIdentity,
+      });
     });
   } catch {
     return;
@@ -63,12 +75,13 @@ export const handleSubscriptionFailure = async ({
 
   await maybeSendFailureAlert(
     health.consecutiveFailures,
-    subscription.url,
+    subscription,
     message,
     channelName,
     effectiveChannelUrl,
     dryRun,
     enqueueForChannel,
+    db,
   );
 
   stats.errors.push(`${subscription.url}: ${message}`);
