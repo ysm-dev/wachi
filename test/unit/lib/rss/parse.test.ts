@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("parseRssItems", () => {
-  it("parses RSS items and sorts oldest first", async () => {
+  it("reverses feed source order for delivery", async () => {
     const xml = await readFile(fixturePath("rss", "basic.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
@@ -24,14 +24,40 @@ describe("parseRssItems", () => {
     expect(items[1]?.title).toBe("Newer Post");
   });
 
+  it("reverses source order even when items have no dates", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>No Date Feed</title>
+    <item>
+      <title>Newest</title>
+      <link>https://example.com/newest</link>
+    </item>
+    <item>
+      <title>Older</title>
+      <link>https://example.com/older</link>
+    </item>
+    <item>
+      <title>Oldest</title>
+      <link>https://example.com/oldest</link>
+    </item>
+  </channel>
+</rss>`;
+
+    const items = await parseRssItems(xml, "https://example.com/feed.xml");
+
+    expect(items.map((item) => item.title)).toEqual(["Oldest", "Older", "Newest"]);
+    expect(items.every((item) => item.publishedAt === null)).toBe(true);
+  });
+
   it("uses fallback fields for missing title/link", async () => {
     const xml = await readFile(fixturePath("rss", "fallback.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/subscription");
 
-    expect(items[0]?.link).toBe("https://example.com/guid-only");
-    expect(items[0]?.title.startsWith("This item has no title field")).toBe(true);
-    expect(items[1]?.link).toBe("https://example.com/title-without-link");
-    expect(items[1]?.title).toBe("Title Without Link");
+    expect(items[0]?.link).toBe("https://example.com/title-without-link");
+    expect(items[0]?.title).toBe("Title Without Link");
+    expect(items[1]?.link).toBe("https://example.com/guid-only");
+    expect(items[1]?.title.startsWith("This item has no title field")).toBe(true);
   });
 
   it("throws on malformed feed XML", async () => {
@@ -46,6 +72,25 @@ describe("parseRssItems", () => {
     expect(items).toHaveLength(1);
     expect(items[0]?.title).toBe("Atom Item");
     expect(items[0]?.link).toBe("https://example.com/atom-item");
+  });
+
+  it("reverses atom entry source order for delivery", async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom</title>
+  <entry>
+    <title>Newest Entry</title>
+    <link href="https://example.com/newest" />
+  </entry>
+  <entry>
+    <title>Older Entry</title>
+    <link href="https://example.com/older" />
+  </entry>
+</feed>`;
+
+    const items = await parseRssItems(xml, "https://example.com/atom");
+
+    expect(items.map((item) => item.title)).toEqual(["Older Entry", "Newest Entry"]);
   });
 
   it("returns empty list for feeds without items", async () => {

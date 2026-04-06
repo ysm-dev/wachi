@@ -464,7 +464,7 @@ On subsequent fetches, send `If-None-Match` and `If-Modified-Since` headers. If 
 - Fetch the RSS feed via ofetch (with ETag/If-Modified-Since)
 - If 304 Not Modified: skip (no changes)
 - Parse with rss-parser
-- For each item: resolve relative URLs, compute dedup hash, INSERT OR IGNORE into sentItems
+- For each item in reverse feed order (oldest item in that feed first): resolve relative URLs, compute dedup hash, INSERT OR IGNORE into sentItems
 - If inserted -> new item -> send notification
 
 ### 3. Baseline Behavior
@@ -518,9 +518,10 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 
 ### Notification Concurrency
 
-- Notifications to the **same channel** are sent **sequentially** (preserves chronological order, avoids service rate limits)
+- Notifications to the **same channel** are sent **sequentially** (preserves per-feed FIFO, avoids service rate limits)
 - Notifications to **different channels** are sent **in parallel**
-- Within each channel, items are ordered **oldest first** (chronological)
+- Within a single RSS/Atom feed, items are sent **oldest first** by reversing the feed's source order (feeds usually publish newest first)
+- Ordering across different feeds in the same channel is **not guaranteed**
 
 ### Partial Notification Failure
 

@@ -115,6 +115,65 @@ describe("wachi CLI", () => {
     expect(unsub.stdout).toContain("Removed:");
   });
 
+  it("prints same-feed items oldest-first in dry-run without pubDate", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-feed-order-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const dbPath = join(dir, "wachi.db");
+
+    const feedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Ordered Feed</title>
+<item><title>Newest</title><link>https://example.com/newest</link><guid>https://example.com/newest</guid></item>
+<item><title>Older</title><link>https://example.com/older</link><guid>https://example.com/older</guid></item>
+<item><title>Oldest</title><link>https://example.com/oldest</link><guid>https://example.com/oldest</guid></item>
+</channel></rss>`;
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/feed.xml") {
+          return new Response(feedXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+    const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+
+    const baseEnv = {
+      WACHI_DB_PATH: dbPath,
+      WACHI_NO_AUTO_UPDATE: "1",
+    };
+
+    const sub = await runCli(
+      [
+        "sub",
+        "--send-existing",
+        "-n",
+        "main",
+        "-a",
+        "slack://token/channel",
+        feedUrl,
+        "--config",
+        configPath,
+      ],
+      baseEnv,
+    );
+    expect(sub.exitCode).toBe(0);
+
+    const dryRun = await runCli(["check", "--dry-run", "--config", configPath], baseEnv);
+    expect(dryRun.exitCode).toBe(0);
+    expect(dryRun.stdout.split("\n")).toEqual([
+      "[dry-run] would send: Oldest -> main",
+      "[dry-run] would send: Older -> main",
+      "[dry-run] would send: Newest -> main",
+      "[dry-run] 3 items would be sent",
+    ]);
+  });
+
   it("stores RSS origin URL from feed link and supports feed-url dedupe/remove", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-rss-origin-"));
     testDirs.push(dir);

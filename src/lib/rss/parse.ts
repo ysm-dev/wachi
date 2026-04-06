@@ -106,12 +106,9 @@ const parseDate = (value: string | undefined): string | null => {
   return new Date(timestamp).toISOString();
 };
 
-const sortOldestFirst = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
-  return [...items].sort((left, right) => {
-    const leftTime = left.publishedAt ? Date.parse(left.publishedAt) : Number.MAX_SAFE_INTEGER;
-    const rightTime = right.publishedAt ? Date.parse(right.publishedAt) : Number.MAX_SAFE_INTEGER;
-    return leftTime - rightTime;
-  });
+const toDeliveryOrder = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
+  // Most feeds publish newest-first, so reverse source order to notify oldest unseen items first.
+  return [...items].reverse();
 };
 
 const sanitizeInvalidDates = (xml: string): string => {
@@ -137,7 +134,7 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
     title: asCleanString((feed as { title?: unknown }).title),
     siteUrl: resolveOptionalUrl(extractFeedSiteUrl(feed), subscriptionUrl),
     imageUrl: extractFeedImageUrl(feed),
-    items: sortOldestFirst(items),
+    items: toDeliveryOrder(items),
   };
 };
 
