@@ -7,6 +7,8 @@ import type { SubscriptionConfig } from "../lib/config/schema.ts";
 import { writeConfig } from "../lib/config/write.ts";
 import { connectDb } from "../lib/db/connect.ts";
 import { seedDedupRecords } from "../lib/db/seed-dedup-records.ts";
+import { formatNotificationBody } from "../lib/notify/format.ts";
+import { sendNotification } from "../lib/notify/send.ts";
 import { normalizeAppriseUrlForIdentity } from "../lib/notify/source-identity.ts";
 import { prepareSubscription } from "../lib/subscriptions/prepare-subscription.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
@@ -173,14 +175,28 @@ export const subCommand = defineCommand({
       let baselineCount = 0;
       if (!sendExisting) {
         const { sqlite, db } = await connectDb();
-        const itemsToSeed = prepared.baselineItems.slice(0, -1);
         baselineCount = seedDedupRecords(
           db,
           channelIdentity,
           prepared.subscription.url,
-          itemsToSeed,
+          prepared.baselineItems,
         );
         sqlite.close();
+
+        const latestItem = prepared.baselineItems.at(-1);
+        if (latestItem) {
+          try {
+            const body = formatNotificationBody(latestItem.link, latestItem.title);
+            await sendNotification({ appriseUrl: channelAppriseUrl, body });
+            if (!isJson) {
+              printStdout(`Sent: ${latestItem.title}`);
+            }
+          } catch {
+            if (!isJson) {
+              printStderr("Warning: failed to send latest item notification");
+            }
+          }
+        }
       }
 
       if (isJson) {
