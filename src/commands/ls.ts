@@ -57,12 +57,11 @@ export const lsCommand = defineCommand({
         printStdout(`${channel.name} (${maskAppriseUrl(channel.apprise_url)})`);
 
         for (const subscription of channel.subscriptions) {
-          const type = "RSS";
-
           const failureKey = `${channel.name}::${subscription.url}`;
           const failures = failuresByKey.get(failureKey) ?? 0;
           const healthSuffix = failures > 0 ? ` [${failures} failures]` : "";
-          printStdout(`  ${subscription.url} (${type})${healthSuffix}`);
+          printStdout(`  Website: ${subscription.url}${healthSuffix}`);
+          printStdout(`  RSS: ${subscription.rss_url}`);
         }
 
         printStdout("");

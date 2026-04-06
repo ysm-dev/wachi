@@ -158,6 +158,12 @@ describe("wachi CLI", () => {
     expect(firstSub.stdout).toContain(`Subscribed (RSS): ${originUrl}`);
     expect(firstSub.stdout).toContain(`Feed: ${feedUrl}`);
 
+    const listedText = await runCli(["ls", "--config", configPath], baseEnv);
+    expect(listedText.exitCode).toBe(0);
+    expect(listedText.stdout).toContain("main (slack://token.../channel)");
+    expect(listedText.stdout).toContain(`Website: ${originUrl}`);
+    expect(listedText.stdout).toContain(`RSS: ${feedUrl}`);
+
     const listed = await runCli(["ls", "--json", "--config", configPath], baseEnv);
     expect(listed.exitCode).toBe(0);
     const listedPayload = JSON.parse(listed.stdout);

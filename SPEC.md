@@ -122,7 +122,7 @@ wachi unsub -n <name> <url>       # Unsubscribe a URL from a channel
 wachi unsub -n <name>             # Remove a channel and all its subscriptions
   --help, -h
 
-wachi ls                          # List all channels and their subscriptions
+wachi ls                          # List all channels and subscriptions with website + RSS URLs
   --help, -h
 
 wachi check                       # Check all subscriptions for changes (one-shot)
@@ -177,7 +177,7 @@ All commands with `--json` / `-j` return a consistent envelope:
 
 Command-specific `data` shapes:
 
-- `wachi ls --json`: `{"channels": [{"name": "...", "apprise_url": "...", "subscriptions": [...]}]}`
+- `wachi ls --json`: `{"channels": [{"name": "...", "apprise_url": "...", "subscriptions": [{"url": "...", "rss_url": "..."}]}]}`
 - `wachi check --json`: `{"sent": [{"title": "...", "link": "...", "channel_name": "main"}], "skipped": 47, "errors": [...]}`
 - `wachi sub --json`: `{"channel": "main", "url": "...", "rss_url": "...", "baseline_count": 42}`
 - `wachi test --json`: `{"sent": true}`
@@ -247,14 +247,16 @@ or for entire channel removal:
 Removed channel main (3 subscriptions)
 ```
 
-**`wachi ls` output (indented tree with health):**
+**`wachi ls` output (indented tree with website + RSS URLs and health):**
 
 ```
 main (slack://xoxb-.../channel)
-  https://blog.example.com (RSS)
+  Website: https://blog.example.com
+  RSS: https://blog.example.com/feed.xml
 
 alerts (discord://webhook-id/token)
-  https://youtube.com/@channel (RSS)
+  Website: https://youtube.com/@channel
+  RSS: https://youtube.com/feeds/videos.xml?channel_id=...
 ```
 
 **`wachi check` output:**
@@ -755,13 +757,12 @@ Each release publishes `bun build --compile` binaries for all 5 platform/arch co
 
 ### CI/CD
 
-One GitHub Actions workflow deploys all on push to main:
-1. Run tests (`bun test`) + type check (`tsgo`) + lint (`biome check`) + dead code (`knip`)
-2. `bun build --compile` for all 5 platform/arch targets
-3. Publish to npm (main package + 5 platform packages)
-4. Create GitHub Release with binaries
-5. Update Homebrew tap formula
-6. Upload install.sh
+One GitHub Actions workflow handles verification and releases:
+1. On push/PR to `main`: run tests (`bun test`) + type check (`tsgo`) + lint (`biome check`) + dead code (`knip`)
+2. On version tag push (`v*`): build `bun build --compile` binaries for all 5 platform/arch targets
+3. On version tag push (`v*`): publish to npm (main package + 5 platform packages)
+4. On version tag push (`v*`): create GitHub Release with binaries
+5. The workflow can also be re-run manually via `workflow_dispatch` on an existing release tag ref
 
 ## Project Structure
 

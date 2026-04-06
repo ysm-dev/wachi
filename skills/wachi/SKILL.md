@@ -46,7 +46,7 @@ wachi sub -n <name> <url>         Subscribe URL to notification channel
 
 wachi unsub -n <name> [url]       Unsubscribe URL or remove entire channel
 
-wachi ls                          List all channels and subscriptions
+wachi ls                          List all channels and subscriptions (Website + RSS)
 
 wachi check                       Check all subscriptions for changes
   -n, --name <name>               Check specific channel only
@@ -141,6 +141,14 @@ wachi check -d
 
 # Check specific channel
 wachi check -n main
+```
+
+`wachi ls` shows both the website URL you subscribed and the RSS URL wachi actually checks:
+
+```text
+main (slack://xoxb-.../channel)
+  Website: https://blog.example.com
+  RSS: https://blog.example.com/feed.xml
 ```
 
 For detailed behavior (dedup model, error patterns, notification format, config schema), see [references/spec.md](references/spec.md).

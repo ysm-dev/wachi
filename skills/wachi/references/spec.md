@@ -96,10 +96,12 @@ Already subscribed: https://blog.example.com -> main
 **`wachi ls`:**
 ```
 main (slack://xoxb-.../channel)
-  https://blog.example.com (RSS)
+  Website: https://blog.example.com
+  RSS: https://blog.example.com/feed.xml
 
 alerts (discord://webhook-id/token)
-  https://youtube.com/@channel (RSS)
+  Website: https://youtube.com/@channel
+  RSS: https://youtube.com/feeds/videos.xml?channel_id=...
 ```
 
 **`wachi check`:**
