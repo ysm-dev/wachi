@@ -204,9 +204,14 @@ export const subCommand = defineCommand({
             if (!isJson) {
               printStdout(`Sent: ${latestItem.title}`);
             }
-          } catch {
+          } catch (error) {
             if (!isJson) {
-              printStderr("Warning: failed to send latest item notification");
+              if (error instanceof WachiError) {
+                printStderr(`Warning: ${error.format()}`);
+              } else {
+                const reason = error instanceof Error ? error.message : String(error);
+                printStderr(`Warning: failed to send latest item notification: ${reason}`);
+              }
             }
           }
         }

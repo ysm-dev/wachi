@@ -10,6 +10,24 @@ export type SourceIdentity = z.infer<typeof sourceIdentitySchema>;
 const USERNAME_SUPPORTED_SCHEMES = new Set(["discord", "slack", "mmost", "mmosts"]);
 const AVATAR_URL_SUPPORTED_SCHEMES = new Set(["discord", "ntfy", "ntfys"]);
 
+const USERNAME_MAX_LENGTH_BY_SCHEME: Record<string, number> = {
+  discord: 80,
+  slack: 80,
+  mmost: 80,
+  mmosts: 80,
+};
+
+const truncateUsername = (username: string, scheme: string): string => {
+  const maxLength = USERNAME_MAX_LENGTH_BY_SCHEME[scheme];
+  if (!maxLength || username.length <= maxLength) {
+    return username;
+  }
+  if (maxLength <= 1) {
+    return username.slice(0, maxLength);
+  }
+  return `${username.slice(0, maxLength - 1).trimEnd()}…`;
+};
+
 const isHttpScheme = (scheme: string): boolean => {
   return scheme === "http" || scheme === "https";
 };
@@ -118,7 +136,7 @@ export const personalizeAppriseUrl = (
 
   const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
   if (username && USERNAME_SUPPORTED_SCHEMES.has(scheme)) {
-    parsed.username = username;
+    parsed.username = truncateUsername(username, scheme);
   }
   if (avatarUrl && AVATAR_URL_SUPPORTED_SCHEMES.has(scheme)) {
     parsed.searchParams.set("avatar_url", avatarUrl);
