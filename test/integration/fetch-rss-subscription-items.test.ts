@@ -302,7 +302,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(siteRequests).toBe(1);
   });
 
-  it("falls back to URL-derived identity when website fetch returns >= 400", async () => {
+  it("leaves feed-level avatar undefined when website fetch returns >= 400 (caller applies link fallback)", async () => {
     const server = Bun.serve({
       port: 0,
       fetch(request) {
@@ -335,7 +335,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     });
 
     expect(result.sourceIdentity?.username).toBe("127.0.0.1");
-    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/favicon.ico`);
+    expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
   });
 
   it("falls back safely when website branding fetch throws", async () => {
@@ -366,7 +366,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
   });
 
-  it("falls back to favicon derivation when feed image URL is invalid", async () => {
+  it("leaves feed-level avatar undefined when feed image URL is invalid (caller applies link fallback)", async () => {
     const server = Bun.serve({
       port: 0,
       fetch() {
@@ -392,6 +392,6 @@ describe("fetchRssSubscriptionItems integration", () => {
     });
 
     expect(result.sourceIdentity?.username).toBe("Feed With Bad Image");
-    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/favicon.ico`);
+    expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
   });
 });

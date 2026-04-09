@@ -9,11 +9,7 @@ import type { SourceIdentity } from "../notify/source-identity.ts";
 import { parseRssFeed } from "../rss/parse.ts";
 import { resolveUrl } from "../url/resolve.ts";
 import { loadWebsiteBranding } from "./load-website-branding.ts";
-import {
-  fallbackWebsiteFaviconUrl,
-  fallbackWebsiteTitle,
-  googleS2FaviconUrl,
-} from "./source-branding.ts";
+import { fallbackWebsiteTitle } from "./source-branding.ts";
 import { subscriptionItemSchema } from "./subscription-item.ts";
 
 const RSS_FETCH_TIMEOUT_MS = 5_000;
@@ -81,12 +77,7 @@ const buildSourceIdentity = async ({
 
   const username = feedTitle ?? websiteTitle ?? fallbackWebsiteTitle(subscriptionUrl) ?? undefined;
   const resolvedFeedImageUrl = resolveOptionalUrl(feedImageUrl, rssUrl);
-  const avatarUrl =
-    resolvedFeedImageUrl ??
-    websiteFaviconUrl ??
-    fallbackWebsiteFaviconUrl(subscriptionUrl) ??
-    googleS2FaviconUrl(subscriptionUrl) ??
-    undefined;
+  const avatarUrl = resolvedFeedImageUrl ?? websiteFaviconUrl ?? undefined;
 
   return { username, avatarUrl };
 };

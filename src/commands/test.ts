@@ -6,6 +6,7 @@ import { readConfig } from "../lib/config/read.ts";
 import { sendNotification } from "../lib/notify/send.ts";
 import type { SourceIdentity } from "../lib/notify/source-identity.ts";
 import { fetchRssSubscriptionItems } from "../lib/subscriptions/fetch-rss-subscription-items.ts";
+import { withLinkFallbackAvatar } from "../lib/subscriptions/resolve-source-identity.ts";
 import { WachiError } from "../utils/error.ts";
 import {
   commandJson,
@@ -50,8 +51,9 @@ const resolveTestSourceIdentity = async ({
           rssUrl: subscription.rss_url,
           useConditionalRequest: false,
         });
-        if (fetched.sourceIdentity?.username || fetched.sourceIdentity?.avatarUrl) {
-          return fetched.sourceIdentity;
+        const resolved = withLinkFallbackAvatar(fetched.sourceIdentity, subscription.url);
+        if (resolved?.username || resolved?.avatarUrl) {
+          return resolved;
         }
       } catch (error) {
         if (error instanceof Error) {

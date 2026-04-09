@@ -18,10 +18,21 @@ const resolveWebsiteSourceIdentity = async (
 ): Promise<SourceIdentity | undefined> => {
   const branding = await loadWebsiteBranding(subscriptionUrl, db);
   const username = branding.title ?? fallbackWebsiteTitle(subscriptionUrl) ?? undefined;
+  const avatarUrl = branding.faviconUrl ?? undefined;
+
+  const sourceIdentity = { username, avatarUrl };
+  return hasSourceIdentity(sourceIdentity) ? sourceIdentity : undefined;
+};
+
+export const withLinkFallbackAvatar = (
+  base: SourceIdentity | undefined,
+  fallbackLink: string,
+): SourceIdentity | undefined => {
+  const username = base?.username;
   const avatarUrl =
-    branding.faviconUrl ??
-    fallbackWebsiteFaviconUrl(subscriptionUrl) ??
-    googleS2FaviconUrl(subscriptionUrl) ??
+    base?.avatarUrl ??
+    fallbackWebsiteFaviconUrl(fallbackLink) ??
+    googleS2FaviconUrl(fallbackLink) ??
     undefined;
 
   const sourceIdentity = { username, avatarUrl };

@@ -9,6 +9,7 @@ import { insertDedupRecord } from "../db/insert-dedup-record.ts";
 import { formatNotificationBody } from "../notify/format.ts";
 import { sendNotification } from "../notify/send.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
+import { withLinkFallbackAvatar } from "../subscriptions/resolve-source-identity.ts";
 import { transformLink } from "../url/transform.ts";
 
 const sentRecordSchema = z.object({
@@ -109,13 +110,14 @@ export const handleSubscriptionItems = async ({
 
     const notificationLink = transformLink(item.link, linkTransforms);
     const body = formatNotificationBody(notificationLink, item.title);
+    const itemSourceIdentity = withLinkFallbackAvatar(sourceIdentity, item.link);
 
     try {
       await enqueueForChannel(effectiveChannelUrl, async () => {
         await sendNotification({
           appriseUrl: effectiveChannelUrl,
           body,
-          sourceIdentity,
+          sourceIdentity: itemSourceIdentity,
         });
       });
       pushSent(stats, item, channelName);

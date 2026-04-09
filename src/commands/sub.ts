@@ -11,7 +11,10 @@ import { formatNotificationBody } from "../lib/notify/format.ts";
 import { sendNotification } from "../lib/notify/send.ts";
 import { normalizeAppriseUrlForIdentity } from "../lib/notify/source-identity.ts";
 import { prepareSubscription } from "../lib/subscriptions/prepare-subscription.ts";
-import { resolveSourceIdentity } from "../lib/subscriptions/resolve-source-identity.ts";
+import {
+  resolveSourceIdentity,
+  withLinkFallbackAvatar,
+} from "../lib/subscriptions/resolve-source-identity.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
 import { validateAppriseUrl, validateReachableUrl } from "../lib/url/validate.ts";
 import { WachiError } from "../utils/error.ts";
@@ -192,10 +195,11 @@ export const subCommand = defineCommand({
         if (latestItem) {
           try {
             const body = formatNotificationBody(latestItem.link, latestItem.title);
-            const sourceIdentity = await resolveSourceIdentity({
+            const baseIdentity = await resolveSourceIdentity({
               subscriptionUrl: prepared.subscription.url,
               rssUrl: prepared.subscription.rss_url,
             });
+            const sourceIdentity = withLinkFallbackAvatar(baseIdentity, latestItem.link);
             await sendNotification({
               appriseUrl: channelAppriseUrl,
               body,

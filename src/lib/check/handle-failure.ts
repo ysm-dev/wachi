@@ -3,7 +3,10 @@ import type { SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { markHealthFailure } from "../db/mark-health-failure.ts";
 import { sendNotification } from "../notify/send.ts";
-import { resolveSourceIdentity } from "../subscriptions/resolve-source-identity.ts";
+import {
+  resolveSourceIdentity,
+  withLinkFallbackAvatar,
+} from "../subscriptions/resolve-source-identity.ts";
 import type { CheckStats } from "./handle-items.ts";
 
 type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
@@ -42,12 +45,13 @@ const maybeSendFailureAlert = async (
       : `wachi: subscription ${subscription.url} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
 
   try {
-    const sourceIdentity = await resolveSourceIdentity({
+    const baseIdentity = await resolveSourceIdentity({
       subscriptionUrl: subscription.url,
       rssUrl: subscription.rss_url,
       db,
       allowFeedFetch: false,
     });
+    const sourceIdentity = withLinkFallbackAvatar(baseIdentity, subscription.url);
     await enqueueForChannel(effectiveChannelUrl, async () => {
       await sendNotification({
         appriseUrl: effectiveChannelUrl,
