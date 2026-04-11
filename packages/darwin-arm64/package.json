@@ -1,6 +1,6 @@
 {
   "name": "@wachi-cli/darwin-arm64",
-  "version": "0.3.13",
+  "version": "0.3.14",
   "private": false,
   "os": [
     "darwin"
