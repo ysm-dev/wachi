@@ -14,21 +14,21 @@ describe("withLinkFallbackAvatar", () => {
     });
   });
 
-  it("derives avatarUrl from the link when base has none", () => {
+  it("derives avatarUrl via Google S2 from the link when base has none", () => {
     const result = withLinkFallbackAvatar({ username: "Feed" }, "https://post.example/article-1");
 
     expect(result).toEqual({
       username: "Feed",
-      avatarUrl: "https://post.example/favicon.ico",
+      avatarUrl: "https://www.google.com/s2/favicons?domain=post.example&sz=128",
     });
   });
 
-  it("derives avatarUrl from the link when base is undefined", () => {
+  it("derives avatarUrl via Google S2 from the link when base is undefined", () => {
     const result = withLinkFallbackAvatar(undefined, "https://blog.example/hello");
 
     expect(result).toEqual({
       username: undefined,
-      avatarUrl: "https://blog.example/favicon.ico",
+      avatarUrl: "https://www.google.com/s2/favicons?domain=blog.example&sz=128",
     });
   });
 

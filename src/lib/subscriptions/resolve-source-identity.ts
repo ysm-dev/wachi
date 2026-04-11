@@ -2,11 +2,7 @@ import type { WachiDb } from "../db/connect.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
 import { fetchRssSubscriptionItems } from "./fetch-rss-subscription-items.ts";
 import { loadWebsiteBranding } from "./load-website-branding.ts";
-import {
-  fallbackWebsiteFaviconUrl,
-  fallbackWebsiteTitle,
-  googleS2FaviconUrl,
-} from "./source-branding.ts";
+import { fallbackWebsiteTitle, googleS2FaviconUrl } from "./source-branding.ts";
 
 const hasSourceIdentity = (sourceIdentity?: SourceIdentity): boolean => {
   return Boolean(sourceIdentity?.username || sourceIdentity?.avatarUrl);
@@ -29,11 +25,7 @@ export const withLinkFallbackAvatar = (
   fallbackLink: string,
 ): SourceIdentity | undefined => {
   const username = base?.username;
-  const avatarUrl =
-    base?.avatarUrl ??
-    fallbackWebsiteFaviconUrl(fallbackLink) ??
-    googleS2FaviconUrl(fallbackLink) ??
-    undefined;
+  const avatarUrl = base?.avatarUrl ?? googleS2FaviconUrl(fallbackLink) ?? undefined;
 
   const sourceIdentity = { username, avatarUrl };
   return hasSourceIdentity(sourceIdentity) ? sourceIdentity : undefined;

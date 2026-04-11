@@ -130,9 +130,11 @@ describe("handleSubscriptionItems source identity fallback", () => {
     });
 
     expect(capturedAppriseUrls).toHaveLength(2);
-    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe("https://first.example/favicon.ico");
+    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
+      "https://www.google.com/s2/favicons?domain=first.example&sz=128",
+    );
     expect(decodeAvatarUrl(capturedAppriseUrls[1] ?? "")).toBe(
-      "https://second.example/favicon.ico",
+      "https://www.google.com/s2/favicons?domain=second.example&sz=128",
     );
   });
 
@@ -156,7 +158,9 @@ describe("handleSubscriptionItems source identity fallback", () => {
     });
 
     expect(capturedAppriseUrls).toHaveLength(1);
-    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe("https://blog.example/favicon.ico");
+    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
+      "https://www.google.com/s2/favicons?domain=blog.example&sz=128",
+    );
   });
 
   it("uses original item link (not transformed) for favicon fallback", async () => {
@@ -181,7 +185,9 @@ describe("handleSubscriptionItems source identity fallback", () => {
 
     expect(capturedAppriseUrls).toHaveLength(1);
     // The body should contain the transformed link, but the avatar uses the original host.
-    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe("https://x.com/favicon.ico");
+    expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
+      "https://www.google.com/s2/favicons?domain=x.com&sz=128",
+    );
     expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).not.toContain("fixupx.com");
   });
 });
