@@ -3,4 +3,5 @@ dist/
 coverage/
 *.db
 *.tmp
+*.bun-build
 .DS_Store
