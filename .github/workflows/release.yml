@@ -65,23 +65,28 @@ jobs:
             output: wachi-darwin-arm64
             package: darwin-arm64
             bin: wachi
+            runner: macos-latest
           - target: bun-darwin-x64
             output: wachi-darwin-x64
             package: darwin-x64
             bin: wachi
+            runner: macos-latest
           - target: bun-linux-arm64
             output: wachi-linux-arm64
             package: linux-arm64
             bin: wachi
+            runner: ubuntu-latest
           - target: bun-linux-x64
             output: wachi-linux-x64
             package: linux-x64
             bin: wachi
+            runner: ubuntu-latest
           - target: bun-windows-x64
             output: wachi-win32-x64.exe
             package: win32-x64
             bin: wachi.exe
-    runs-on: ubuntu-latest
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -102,9 +107,7 @@ jobs:
 
       - name: Ad-hoc sign macOS binary
         if: contains(matrix.target, 'darwin')
-        run: |
-          pipx install rcodesign
-          rcodesign sign dist/${{ matrix.output }}
+        run: codesign --sign - --force dist/${{ matrix.output }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
