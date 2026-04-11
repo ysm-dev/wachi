@@ -66,26 +66,31 @@ jobs:
             package: darwin-arm64
             bin: wachi
             runner: macos-latest
+            native: true
           - target: bun-darwin-x64
             output: wachi-darwin-x64
             package: darwin-x64
             bin: wachi
-            runner: macos-latest
+            runner: macos-13
+            native: true
           - target: bun-linux-arm64
             output: wachi-linux-arm64
             package: linux-arm64
             bin: wachi
             runner: ubuntu-latest
+            native: false
           - target: bun-linux-x64
             output: wachi-linux-x64
             package: linux-x64
             bin: wachi
             runner: ubuntu-latest
+            native: false
           - target: bun-windows-x64
             output: wachi-win32-x64.exe
             package: win32-x64
             bin: wachi.exe
             runner: ubuntu-latest
+            native: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -100,13 +105,20 @@ jobs:
       - name: Bake version constant
         run: bun run version:bake
 
-      - name: Build binary
+      - name: Build binary (native)
+        if: matrix.native
+        run: |
+          mkdir -p dist
+          bun build src/index.ts --compile --outfile dist/${{ matrix.output }}
+
+      - name: Build binary (cross-compile)
+        if: ${{ !matrix.native }}
         run: |
           mkdir -p dist
           bun build src/index.ts --compile --target ${{ matrix.target }} --outfile dist/${{ matrix.output }}
 
       - name: Ad-hoc sign macOS binary
-        if: contains(matrix.target, 'darwin')
+        if: matrix.native
         run: codesign --sign - --force dist/${{ matrix.output }}
 
       - name: Upload binary artifact
