@@ -31,7 +31,7 @@ describe("source-branding", () => {
       "https://www.example.com/favicon.ico",
     );
     expect(googleS2FaviconUrl("https://www.example.com/path")).toBe(
-      "https://www.google.com/s2/favicons?domain=www.example.com&sz=128",
+      "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fwww.example.com&size=128",
     );
   });
 

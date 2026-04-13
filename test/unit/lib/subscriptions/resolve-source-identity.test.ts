@@ -19,7 +19,8 @@ describe("withLinkFallbackAvatar", () => {
 
     expect(result).toEqual({
       username: "Feed",
-      avatarUrl: "https://www.google.com/s2/favicons?domain=post.example&sz=128",
+      avatarUrl:
+        "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fpost.example&size=128",
     });
   });
 
@@ -28,7 +29,8 @@ describe("withLinkFallbackAvatar", () => {
 
     expect(result).toEqual({
       username: undefined,
-      avatarUrl: "https://www.google.com/s2/favicons?domain=blog.example&sz=128",
+      avatarUrl:
+        "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fblog.example&size=128",
     });
   });
 

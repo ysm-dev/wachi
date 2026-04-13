@@ -113,7 +113,7 @@ export const googleS2FaviconUrl = (pageUrl: string): string | null => {
     if (!hostname) {
       return null;
     }
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostname)}&sz=128`;
+    return `https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=${encodeURIComponent(`http://${hostname}`)}&size=128`;
   } catch {
     return null;
   }

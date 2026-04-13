@@ -131,10 +131,10 @@ describe("handleSubscriptionItems source identity fallback", () => {
 
     expect(capturedAppriseUrls).toHaveLength(2);
     expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
-      "https://www.google.com/s2/favicons?domain=first.example&sz=128",
+      "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Ffirst.example&size=128",
     );
     expect(decodeAvatarUrl(capturedAppriseUrls[1] ?? "")).toBe(
-      "https://www.google.com/s2/favicons?domain=second.example&sz=128",
+      "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fsecond.example&size=128",
     );
   });
 
@@ -159,7 +159,7 @@ describe("handleSubscriptionItems source identity fallback", () => {
 
     expect(capturedAppriseUrls).toHaveLength(1);
     expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
-      "https://www.google.com/s2/favicons?domain=blog.example&sz=128",
+      "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fblog.example&size=128",
     );
   });
 
@@ -186,7 +186,7 @@ describe("handleSubscriptionItems source identity fallback", () => {
     expect(capturedAppriseUrls).toHaveLength(1);
     // The body should contain the transformed link, but the avatar uses the original host.
     expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).toBe(
-      "https://www.google.com/s2/favicons?domain=x.com&sz=128",
+      "https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=http%3A%2F%2Fx.com&size=128",
     );
     expect(decodeAvatarUrl(capturedAppriseUrls[0] ?? "")).not.toContain("fixupx.com");
   });
