@@ -23,32 +23,12 @@
         "zod-validation-error": "5.0.0",
       },
       "optionalDependencies": {
-        "@wachi-cli/darwin-arm64": "0.3.4",
-        "@wachi-cli/darwin-x64": "0.3.4",
-        "@wachi-cli/linux-arm64": "0.3.4",
-        "@wachi-cli/linux-x64": "0.3.4",
-        "@wachi-cli/win32-x64": "0.3.4",
+        "@wachi-cli/darwin-arm64": "0.3.15",
+        "@wachi-cli/darwin-x64": "0.3.15",
+        "@wachi-cli/linux-arm64": "0.3.15",
+        "@wachi-cli/linux-x64": "0.3.15",
+        "@wachi-cli/win32-x64": "0.3.15",
       },
-    },
-    "packages/darwin-arm64": {
-      "name": "@wachi-cli/darwin-arm64",
-      "version": "0.3.4",
-    },
-    "packages/darwin-x64": {
-      "name": "@wachi-cli/darwin-x64",
-      "version": "0.3.4",
-    },
-    "packages/linux-arm64": {
-      "name": "@wachi-cli/linux-arm64",
-      "version": "0.3.4",
-    },
-    "packages/linux-x64": {
-      "name": "@wachi-cli/linux-x64",
-      "version": "0.3.4",
-    },
-    "packages/win32-x64": {
-      "name": "@wachi-cli/win32-x64",
-      "version": "0.3.4",
     },
   },
   "packages": {
@@ -206,15 +186,15 @@
 
     "@typescript/native-preview-win32-x64": ["@typescript/native-preview-win32-x64@7.0.0-dev.20260218.1", "", { "os": "win32", "cpu": "x64" }, "sha512-9zfUrKV3xBog2tpIR9NZOags+QJZSj7v9Ek7KdSkVu978IJqF9RX7oa2xftX+eiHySfV5ZQ8r2fdhdbYBk+kMw=="],
 
-    "@wachi-cli/darwin-arm64": ["@wachi-cli/darwin-arm64@workspace:packages/darwin-arm64"],
+    "@wachi-cli/darwin-arm64": ["@wachi-cli/darwin-arm64@0.3.15", "", { "os": "darwin", "cpu": "arm64" }, "sha512-nz71hmErenytOVGKOkfFDkDED6mF+vsRS6we1DU7Q90BKaRzkRx1aTI3eii08aKRWtNBvsO7QLd1r8kXPq6OJw=="],
 
-    "@wachi-cli/darwin-x64": ["@wachi-cli/darwin-x64@workspace:packages/darwin-x64"],
+    "@wachi-cli/darwin-x64": ["@wachi-cli/darwin-x64@0.3.15", "", { "os": "darwin", "cpu": "x64" }, "sha512-SS3i03zk6HC1x4aaSxG8eNAlCBo9V9fLt5KxhhOcItxyrm8z2cIpCDx/pENJge6fIJZTzPAv2G6r/+1PUguGyg=="],
 
-    "@wachi-cli/linux-arm64": ["@wachi-cli/linux-arm64@workspace:packages/linux-arm64"],
+    "@wachi-cli/linux-arm64": ["@wachi-cli/linux-arm64@0.3.15", "", { "os": "linux", "cpu": "arm64" }, "sha512-9Sdz1jD0BskSpscyhjH39sYOg+ctP3hIihjb5igYrkX38O1o3D2EtENeMsejMf6Yv8/kc2C/axEuEwRUj95kLA=="],
 
-    "@wachi-cli/linux-x64": ["@wachi-cli/linux-x64@workspace:packages/linux-x64"],
+    "@wachi-cli/linux-x64": ["@wachi-cli/linux-x64@0.3.15", "", { "os": "linux", "cpu": "x64" }, "sha512-0YfMFP9KWYAZB5PXvSJAmcszdUAaixIBfscKT1WFp8by/k9FrnDBiTy4hAF9ea/MzPBAfDhNTnd/IoF6YZhkZg=="],
 
-    "@wachi-cli/win32-x64": ["@wachi-cli/win32-x64@workspace:packages/win32-x64"],
+    "@wachi-cli/win32-x64": ["@wachi-cli/win32-x64@0.3.15", "", { "os": "win32", "cpu": "x64" }, "sha512-tLXeIE2lqX2UvTQZuE12DoBfh9VvjXDcOeRkxFilRBLE1CytiN3mLN6ckjlSc6f+c7EwPRgoyxWcLCl/AuWBZA=="],
 
     "argparse": ["argparse@2.0.1", "", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
