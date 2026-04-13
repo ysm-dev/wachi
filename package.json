@@ -1,6 +1,6 @@
 {
   "name": "wachi",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "description": "Subscribe any link and get notified on change",
   "license": "MIT",
   "type": "module",
