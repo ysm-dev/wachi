@@ -34,14 +34,14 @@ const maybeSendFailureAlert = async (
   enqueueForChannel: QueueFn,
   db: WachiDb,
 ): Promise<void> => {
-  const isMilestone = failures > 10 && failures % 100 === 0;
-  if (!(failures === 3 || failures === 10 || isMilestone) || dryRun) {
+  const isMilestone = failures > 100 && failures % 100 === 0;
+  if (!(failures === 10 || failures === 100 || isMilestone) || dryRun) {
     return;
   }
 
   const body =
-    failures === 3
-      ? `wachi: subscription ${subscription.url} has failed 3 consecutive checks. Last error: ${message}`
+    failures === 10
+      ? `wachi: subscription ${subscription.url} has failed 10 consecutive checks. Last error: ${message}`
       : `wachi: subscription ${subscription.url} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
 
   try {

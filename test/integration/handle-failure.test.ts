@@ -111,36 +111,18 @@ describe("handleSubscriptionFailure", () => {
     };
 
     const stats = makeStats();
-    await handleSubscriptionFailure({
-      channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
-      subscription,
-      db,
-      dryRun: false,
-      stats,
-      enqueueForChannel: immediateEnqueue,
-      error: new Error("boom"),
-    });
-    await handleSubscriptionFailure({
-      channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
-      subscription,
-      db,
-      dryRun: false,
-      stats,
-      enqueueForChannel: immediateEnqueue,
-      error: new Error("boom"),
-    });
-    await handleSubscriptionFailure({
-      channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
-      subscription,
-      db,
-      dryRun: false,
-      stats,
-      enqueueForChannel: immediateEnqueue,
-      error: new Error("boom"),
-    });
+    for (let i = 0; i < 10; i++) {
+      await handleSubscriptionFailure({
+        channelName: "main",
+        effectiveChannelUrl: "discord://12345/token",
+        subscription,
+        db,
+        dryRun: false,
+        stats,
+        enqueueForChannel: immediateEnqueue,
+        error: new Error("boom"),
+      });
+    }
 
     expect(sentAppriseUrls).toHaveLength(1);
     const decoded = decodeURIComponent(sentAppriseUrls[0] ?? "");
