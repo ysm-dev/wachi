@@ -112,7 +112,7 @@ const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>):
 const makeStats = (): CheckStats => ({ sent: [], skipped: 0, errors: [], networkSkipped: 0 });
 
 describe("handleSubscriptionItems archive integration", () => {
-  it("archives the original item link after a successful notification", async () => {
+  it("archives the transformed x.com link after a successful notification", async () => {
     const db = connection?.db;
     if (!db) {
       throw new Error("db not initialized");
@@ -131,6 +131,36 @@ describe("handleSubscriptionItems archive integration", () => {
       stats: makeStats(),
       enqueueForChannel: immediateEnqueue,
       linkTransforms: [{ from: "x.com", to: "fixupx.com" }],
+    });
+    await flushArchivePool(100);
+
+    expect(capturedRequests).toEqual([
+      {
+        method: "GET",
+        url: "https://web.archive.org/save/https://fixupx.com/user/status/123456",
+      },
+    ]);
+  });
+
+  it("keeps archiving the original link for non-twitter hosts", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const originalLink = "https://example.com/post";
+    await handleSubscriptionItems({
+      items: [{ title: "Post", link: originalLink }],
+      channelName: "main",
+      effectiveChannelUrl: "discord://12345/token",
+      subscriptionUrl: "https://example.com/feed.xml",
+      db,
+      dryRun: false,
+      isJson: true,
+      isVerbose: false,
+      stats: makeStats(),
+      enqueueForChannel: immediateEnqueue,
+      linkTransforms: [{ from: "example.com", to: "mirror.example.com" }],
     });
     await flushArchivePool(100);
 

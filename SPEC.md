@@ -518,7 +518,8 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 
 ### Notification URL Archiving
 
-- After a notification is successfully delivered, wachi submits the **original item URL** to the Wayback Machine in the background
+- After a notification is successfully delivered, wachi submits the item URL to the Wayback Machine in the background
+- For `x.com` / `twitter.com` links, wachi archives the **transformed notification URL** instead of the original URL because Wayback currently rejects direct archiving of those originals (`error:blocked-url`)
 - Enabled by default
 - Disabled with `WACHI_NO_ARCHIVE=1`
 - If `WACHI_ARCHIVE_ACCESS_KEY` and `WACHI_ARCHIVE_SECRET_KEY` are set, wachi uses the authenticated Save Page Now POST API

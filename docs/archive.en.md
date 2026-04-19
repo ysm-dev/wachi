@@ -275,10 +275,10 @@ backgrounded.
 
 **Important details:**
 
-- Use `item.link` (the **original** RSS link), NOT the transformed
-  `notificationLink`. fxtwitter.com/vxtwitter.com mirrors are display-only;
-  the canonical resource is the original. This also means archives stay
-  consistent regardless of `link_transforms` config changes.
+- Use `notificationLink` for `x.com` / `twitter.com` items because Wayback
+  rejects direct archiving of those original URLs with `error:blocked-url`.
+- Use `item.link` (the **original** RSS link) for everything else so archive
+  behavior stays stable even if unrelated `link_transforms` settings change.
 - Skip in `dryRun` — the diff above is in the non-dry-run branch only.
 - Skip on `sendNotification` failure — the diff above is inside `try {}` and
   only after `enqueueForChannel` resolves.

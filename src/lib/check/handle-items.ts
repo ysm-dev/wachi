@@ -57,6 +57,27 @@ const handleItemsOptionsSchema = z.object({
 
 type HandleItemsOptions = z.infer<typeof handleItemsOptionsSchema>;
 
+const stripWww = (hostname: string): string => {
+  return hostname.replace(/^www\./, "");
+};
+
+const shouldArchiveNotificationLink = (originalLink: string): boolean => {
+  try {
+    const hostname = stripWww(new URL(originalLink).hostname);
+    return hostname === "x.com" || hostname === "twitter.com";
+  } catch {
+    return false;
+  }
+};
+
+const resolveArchiveLink = (originalLink: string, notificationLink: string): string => {
+  if (shouldArchiveNotificationLink(originalLink)) {
+    return notificationLink;
+  }
+
+  return originalLink;
+};
+
 const pushSent = (stats: CheckStats, item: Item, channelName: string): void => {
   stats.sent.push({
     title: item.title,
@@ -122,7 +143,7 @@ export const handleSubscriptionItems = async ({
         });
       });
       pushSent(stats, item, channelName);
-      submitArchive(item.link, { isVerbose });
+      submitArchive(resolveArchiveLink(item.link, notificationLink), { isVerbose });
       if (!isJson) {
         printStdout(`sent: ${item.title} -> ${channelName}`);
       }

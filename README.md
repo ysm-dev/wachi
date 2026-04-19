@@ -180,6 +180,9 @@ Notified item URLs are archived to the Wayback Machine by default. If archive ke
 `wachi` falls back to the anonymous save endpoint. Set both archive keys for authenticated POST
 submissions and higher Wayback limits.
 
+For `x.com` / `twitter.com` items, `wachi` archives the transformed notification URL (for example
+`fixupx.com`) because Wayback currently blocks direct archiving of the original X URL.
+
 ## Design
 
 - **Stateless checks** -- `wachi check` is a one-shot command. Bring your own scheduler (cron, crnd, systemd, launchd)

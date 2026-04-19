@@ -270,10 +270,10 @@ export const resetArchiveSubmitStateForTest = (): void => {
 
 **중요 디테일:**
 
-- `notificationLink` (transform된 것) 이 아니라 `item.link` (**원본** RSS
-  링크) 사용. fxtwitter.com / vxtwitter.com 같은 미러는 표시용일 뿐이고
-  canonical 리소스는 원본 URL. `link_transforms` 설정이 바뀌어도 아카이브가
-  일관성 유지됨.
+- `x.com` / `twitter.com` 항목은 `notificationLink` (transform된 링크)를
+  사용. Wayback이 원본 X URL에 대해 `error:blocked-url` 로 거절하기 때문.
+- 그 외 URL은 `item.link` (**원본** RSS 링크) 사용. 이렇게 해야 무관한
+  `link_transforms` 설정 변경과 상관없이 아카이브 동작이 안정적으로 유지됨.
 - `dryRun` 분기에서는 호출 안 함 — 위 diff는 non-dry-run 분기 안에 있음.
 - `sendNotification` 실패 시 호출 안 함 — `try {}` 블록 안의 `enqueueForChannel`
   resolve 이후 위치.
