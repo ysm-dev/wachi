@@ -168,7 +168,17 @@ All fields are optional with sensible defaults. An empty config file is valid.
 
 | Variable | Purpose |
 |----------|---------|
+| `WACHI_APPRISE_URL` | Override notification destination for ALL channels |
+| `WACHI_ARCHIVE_ACCESS_KEY` | Optional Internet Archive access key for authenticated Wayback submissions |
+| `WACHI_ARCHIVE_SECRET_KEY` | Optional Internet Archive secret key for authenticated Wayback submissions |
+| `WACHI_CONFIG_PATH` | Custom config file path |
+| `WACHI_DB_PATH` | Custom database path |
+| `WACHI_NO_ARCHIVE` | Set to `1` to disable auto-archiving of notified URLs |
 | `WACHI_NO_AUTO_UPDATE` | Set to `1` to disable auto-update |
+
+Notified item URLs are archived to the Wayback Machine by default. If archive keys are unset,
+`wachi` falls back to the anonymous save endpoint. Set both archive keys for authenticated POST
+submissions and higher Wayback limits.
 
 ## Design
 

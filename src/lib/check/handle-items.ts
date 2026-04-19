@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { submitArchive } from "../archive/submit.ts";
 import { printStderr, printStdout } from "../cli/io.ts";
 import type { LinkTransform } from "../config/schema.ts";
 import { buildDedupHash } from "../db/build-dedup-hash.ts";
@@ -121,6 +122,7 @@ export const handleSubscriptionItems = async ({
         });
       });
       pushSent(stats, item, channelName);
+      submitArchive(item.link, { isVerbose });
       if (!isJson) {
         printStdout(`sent: ${item.title} -> ${channelName}`);
       }

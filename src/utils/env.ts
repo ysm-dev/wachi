@@ -10,8 +10,11 @@ const readEnv = (name: string): string | undefined => {
 export const getEnv = () => {
   return {
     appriseUrlOverride: readEnv("WACHI_APPRISE_URL"),
+    archiveAccessKey: readEnv("WACHI_ARCHIVE_ACCESS_KEY"),
+    archiveSecretKey: readEnv("WACHI_ARCHIVE_SECRET_KEY"),
     configPath: readEnv("WACHI_CONFIG_PATH"),
     dbPath: readEnv("WACHI_DB_PATH"),
+    noArchive: readEnv("WACHI_NO_ARCHIVE") === "1",
     pathsRoot: readEnv("WACHI_PATHS_ROOT"),
     wrapperPath: readEnv("WACHI_WRAPPER_PATH"),
     noAutoUpdate: readEnv("WACHI_NO_AUTO_UPDATE") === "1",

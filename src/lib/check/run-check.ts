@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { z } from "zod";
 import { getEnv } from "../../utils/env.ts";
+import { flushArchivePool } from "../archive/pool.ts";
 import { printJsonSuccess, printStdout } from "../cli/io.ts";
 import { toChannelNameKey } from "../config/channel-name-key.ts";
 import { readConfig } from "../config/read.ts";
@@ -125,6 +126,7 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
+    await flushArchivePool();
     printFinalSummary(stats, dryRun, isJson);
     return resolveExitCode(stats);
   } finally {
