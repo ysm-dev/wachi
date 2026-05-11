@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { googleS2FaviconUrl } from "../../src/lib/subscriptions/source-branding.ts";
 
 const runCli = async (args: string[], env: NodeJS.ProcessEnv = {}) => {
   const proc = Bun.spawn(["bun", "run", "src/index.ts", ...args], {
@@ -112,6 +113,8 @@ printf '%s' "$last" > "$WACHI_TEST_UVX_ARGS"
     const personalizedUrl = decodeURIComponent(await readFile(uvxArgsPath, "utf8"));
 
     expect(personalizedUrl).toContain("discord://Example Feed@12345/token");
-    expect(personalizedUrl).toContain(`avatar_url=http://127.0.0.1:${server.port}/icons/site.png`);
+    expect(personalizedUrl).toContain(
+      `avatar_url=${googleS2FaviconUrl(`http://127.0.0.1:${server.port}/site`)}`,
+    );
   });
 });

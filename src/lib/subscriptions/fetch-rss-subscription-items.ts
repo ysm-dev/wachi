@@ -9,7 +9,7 @@ import type { SourceIdentity } from "../notify/source-identity.ts";
 import { parseRssFeed } from "../rss/parse.ts";
 import { resolveUrl } from "../url/resolve.ts";
 import { loadWebsiteBranding } from "./load-website-branding.ts";
-import { fallbackWebsiteTitle } from "./source-branding.ts";
+import { fallbackWebsiteTitle, googleS2FaviconUrl } from "./source-branding.ts";
 import { subscriptionItemSchema } from "./subscription-item.ts";
 
 const RSS_FETCH_TIMEOUT_MS = 5_000;
@@ -41,13 +41,17 @@ export type FetchRssItemsResult = z.infer<typeof fetchRssItemsResultSchema>;
 const etagMetaKey = (rssUrl: string): string => `etag:${rssUrl}`;
 const lastModifiedMetaKey = (rssUrl: string): string => `last-modified:${rssUrl}`;
 
-const resolveOptionalUrl = (value: string | null, baseUrl: string): string | null => {
+const resolveOptionalHttpUrl = (value: string | null, baseUrl: string): string | null => {
   if (!value) {
     return null;
   }
 
   try {
-    return new URL(value, baseUrl).toString();
+    const parsed = new URL(value, baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
   } catch {
     return null;
   }
@@ -68,16 +72,18 @@ const buildSourceIdentity = async ({
 }): Promise<SourceIdentity> => {
   let websiteTitle: string | null = null;
   let websiteFaviconUrl: string | null = null;
+  const resolvedFeedImageUrl = resolveOptionalHttpUrl(feedImageUrl, rssUrl);
+  const originalLinkFaviconUrl = googleS2FaviconUrl(subscriptionUrl);
 
-  if (!feedTitle || !feedImageUrl) {
+  if (!feedTitle || (!resolvedFeedImageUrl && !originalLinkFaviconUrl)) {
     const websiteBranding = await loadWebsiteBranding(subscriptionUrl, db);
     websiteTitle = websiteBranding.title;
     websiteFaviconUrl = websiteBranding.faviconUrl;
   }
 
   const username = feedTitle ?? websiteTitle ?? fallbackWebsiteTitle(subscriptionUrl) ?? undefined;
-  const resolvedFeedImageUrl = resolveOptionalUrl(feedImageUrl, rssUrl);
-  const avatarUrl = resolvedFeedImageUrl ?? websiteFaviconUrl ?? undefined;
+  const avatarUrl =
+    resolvedFeedImageUrl ?? originalLinkFaviconUrl ?? websiteFaviconUrl ?? undefined;
 
   return { username, avatarUrl };
 };

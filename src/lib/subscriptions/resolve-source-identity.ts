@@ -14,7 +14,7 @@ const resolveWebsiteSourceIdentity = async (
 ): Promise<SourceIdentity | undefined> => {
   const branding = await loadWebsiteBranding(subscriptionUrl, db);
   const username = branding.title ?? fallbackWebsiteTitle(subscriptionUrl) ?? undefined;
-  const avatarUrl = branding.faviconUrl ?? undefined;
+  const avatarUrl = googleS2FaviconUrl(subscriptionUrl) ?? branding.faviconUrl ?? undefined;
 
   const sourceIdentity = { username, avatarUrl };
   return hasSourceIdentity(sourceIdentity) ? sourceIdentity : undefined;

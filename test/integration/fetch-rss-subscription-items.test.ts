@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
 import { getMetaValue } from "../../src/lib/db/get-meta-value.ts";
 import { fetchRssSubscriptionItems } from "../../src/lib/subscriptions/fetch-rss-subscription-items.ts";
+import { googleS2FaviconUrl } from "../../src/lib/subscriptions/source-branding.ts";
 import { WachiError } from "../../src/utils/error.ts";
 
 let tempDir = "";
@@ -117,7 +118,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(first.items).toHaveLength(1);
     expect(first.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/one`);
     expect(first.sourceIdentity?.username).toBe("Feed");
-    expect(first.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
+    expect(first.sourceIdentity?.avatarUrl).toBe(googleS2FaviconUrl(subscriptionUrl) ?? undefined);
     expect(getMetaValue(db, `etag:${rssUrl}`)).toBe(etag);
 
     const second = await fetchRssSubscriptionItems({
@@ -251,7 +252,7 @@ describe("fetchRssSubscriptionItems integration", () => {
 
     expect(result.notModified).toBe(false);
     expect(result.sourceIdentity?.username).toBe("Website Title");
-    expect(result.sourceIdentity?.avatarUrl).toBe(`http://127.0.0.1:${server.port}/icons/site.png`);
+    expect(result.sourceIdentity?.avatarUrl).toBe(googleS2FaviconUrl(subscriptionUrl) ?? undefined);
   });
 
   it("reuses cached website branding across repeated checks", async () => {
@@ -302,7 +303,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(siteRequests).toBe(1);
   });
 
-  it("leaves feed-level avatar undefined when website fetch returns >= 400 (caller applies link fallback)", async () => {
+  it("falls back to the original link favicon when website fetch returns >= 400", async () => {
     const server = Bun.serve({
       port: 0,
       fetch(request) {
@@ -335,7 +336,7 @@ describe("fetchRssSubscriptionItems integration", () => {
     });
 
     expect(result.sourceIdentity?.username).toBe("127.0.0.1");
-    expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
+    expect(result.sourceIdentity?.avatarUrl).toBe(googleS2FaviconUrl(subscriptionUrl) ?? undefined);
   });
 
   it("falls back safely when website branding fetch throws", async () => {
@@ -366,13 +367,23 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
   });
 
-  it("leaves feed-level avatar undefined when feed image URL is invalid (caller applies link fallback)", async () => {
+  it("uses the original link favicon when feed image URL is invalid", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch() {
-        return new Response(feedWithInvalidImageXml, {
-          headers: { "content-type": "application/rss+xml" },
-        });
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/site") {
+          return new Response(
+            "<html><head><title>Original Site</title><link rel='icon' href='/icons/site.png'></head></html>",
+            { headers: { "content-type": "text/html" } },
+          );
+        }
+        if (url.pathname === "/feed.xml") {
+          return new Response(feedWithInvalidImageXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
       },
     });
     servers.push(server);
@@ -392,6 +403,6 @@ describe("fetchRssSubscriptionItems integration", () => {
     });
 
     expect(result.sourceIdentity?.username).toBe("Feed With Bad Image");
-    expect(result.sourceIdentity?.avatarUrl).toBeUndefined();
+    expect(result.sourceIdentity?.avatarUrl).toBe(googleS2FaviconUrl(subscriptionUrl) ?? undefined);
   });
 });

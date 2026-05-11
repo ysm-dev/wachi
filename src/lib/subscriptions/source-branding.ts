@@ -1,5 +1,4 @@
 import { load } from "cheerio";
-import { resolveUrl } from "../url/resolve.ts";
 
 type WebsiteBranding = {
   title: string | null;
@@ -13,6 +12,18 @@ const asCleanString = (value: string | undefined | null): string | null => {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const resolveHttpUrl = (url: string, baseUrl: string): string | null => {
+  try {
+    const parsed = new URL(url, baseUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 };
 
 const parseIconSize = (sizes: string | undefined): number => {
@@ -75,7 +86,7 @@ export const extractWebsiteBranding = (pageUrl: string, html: string): WebsiteBr
       return;
     }
 
-    const resolvedHref = resolveUrl(href, pageUrl);
+    const resolvedHref = resolveHttpUrl(href, pageUrl);
     if (!resolvedHref) {
       return;
     }

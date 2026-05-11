@@ -6,6 +6,7 @@ import { handleSubscriptionFailure } from "../../src/lib/check/handle-failure.ts
 import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
+import { googleS2FaviconUrl } from "../../src/lib/subscriptions/source-branding.ts";
 
 type MockProc = {
   exited: Promise<number>;
@@ -127,6 +128,6 @@ describe("handleSubscriptionFailure", () => {
     expect(sentAppriseUrls).toHaveLength(1);
     const decoded = decodeURIComponent(sentAppriseUrls[0] ?? "");
     expect(decoded).toContain("discord://Example Site@12345/token");
-    expect(decoded).toContain(`avatar_url=http://127.0.0.1:${server.port}/icons/site.png`);
+    expect(decoded).toContain(`avatar_url=${googleS2FaviconUrl(subscription.url)}`);
   });
 });

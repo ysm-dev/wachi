@@ -76,6 +76,21 @@ describe("source-branding", () => {
     expect(branding.faviconUrl).toBeNull();
   });
 
+  it("does not treat an invalid favicon href as the page URL", () => {
+    const html = `<!doctype html>
+<html>
+  <head>
+    <title>Example</title>
+    <link rel="icon" href="http://[invalid" />
+  </head>
+</html>`;
+
+    const branding = extractWebsiteBranding("https://example.com", html);
+
+    expect(branding.title).toBe("Example");
+    expect(branding.faviconUrl).toBeNull();
+  });
+
   it("returns null fallbacks for invalid or hostless URLs", () => {
     expect(fallbackWebsiteTitle("not a url")).toBeNull();
     expect(fallbackWebsiteFaviconUrl("not a url")).toBeNull();

@@ -252,6 +252,36 @@ describe("parseRssItems", () => {
     expect(parsed.imageUrl).toBe("https://example.com/nested-itunes.png");
   });
 
+  it("extracts Atom logo metadata as the feed image", async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Feed</title>
+  <link href="https://example.com/" />
+  <logo>https://example.com/logo.png</logo>
+  <icon>https://example.com/icon.png</icon>
+  <entry>
+    <title>Atom Item</title>
+    <link href="https://example.com/item" />
+  </entry>
+</feed>`;
+
+    const parsed = await parseRssFeed(xml, "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/logo.png");
+  });
+
+  it("uses Atom icon metadata when no logo is present", async () => {
+    const xml = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Feed</title>
+  <icon>https://example.com/icon.png</icon>
+</feed>`;
+
+    const parsed = await parseRssFeed(xml, "https://example.com/feed.xml");
+
+    expect(parsed.imageUrl).toBe("https://example.com/icon.png");
+  });
+
   it("returns null image metadata when parser feed value is a function object", async () => {
     Parser.prototype.parseString = (async () => {
       const feed = Object.assign(() => undefined, {

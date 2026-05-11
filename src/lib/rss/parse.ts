@@ -45,6 +45,16 @@ const extractFeedImageUrl = (feed: unknown): string | null => {
     return feedImageUrl;
   }
 
+  const atomLogoUrl = asCleanString(feedRecord.logo);
+  if (atomLogoUrl) {
+    return atomLogoUrl;
+  }
+
+  const atomIconUrl = asCleanString(feedRecord.icon);
+  if (atomIconUrl) {
+    return atomIconUrl;
+  }
+
   const itunesImage = feedRecord["itunes:image"];
   const itunesImageUrl = asCleanString(itunesImage);
   if (itunesImageUrl) {
@@ -116,7 +126,11 @@ const sanitizeInvalidDates = (xml: string): string => {
 };
 
 export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promise<ParsedFeed> => {
-  const parser = new Parser();
+  const parser = new Parser({
+    customFields: {
+      feed: ["logo", "icon"],
+    },
+  });
   const feed = await parser.parseString(sanitizeInvalidDates(xml));
 
   const items = feed.items.map((item) => {
