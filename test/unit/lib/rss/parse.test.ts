@@ -50,7 +50,7 @@ describe("parseRssItems", () => {
     expect(items.every((item) => item.publishedAt === null)).toBe(true);
   });
 
-  it("uses fallback fields for missing title/link", async () => {
+  it("uses descriptions for missing titles and URL-like GUIDs for missing links", async () => {
     const xml = await readFile(fixturePath("rss", "fallback.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/subscription");
 
@@ -58,6 +58,31 @@ describe("parseRssItems", () => {
     expect(items[0]?.title).toBe("Title Without Link");
     expect(items[1]?.link).toBe("https://example.com/guid-only");
     expect(items[1]?.title.startsWith("This item has no title field")).toBe(true);
+  });
+
+  it("leaves missing links and opaque GUIDs invalid", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Invalid Link Feed</title>
+    <item>
+      <title>Missing Link</title>
+    </item>
+    <item>
+      <title>Opaque GUID</title>
+      <guid isPermaLink="false">post-123</guid>
+    </item>
+  </channel>
+</rss>`;
+
+    const items = await parseRssItems(xml, "https://example.com/subscription");
+    const linksByTitle = Object.fromEntries(items.map((item) => [item.title, item.link]));
+
+    expect(linksByTitle).toEqual({
+      "Opaque GUID": "",
+      "Missing Link": "",
+    });
+    expect(items.some((item) => item.link === "https://example.com/subscription")).toBe(false);
   });
 
   it("throws on malformed feed XML", async () => {

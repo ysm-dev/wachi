@@ -35,31 +35,22 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 ### Ongoing checks (`wachi check`)
 
 1. Auto-update check (24h cooldown, non-blocking)
-2. Cleanup old dedup records (TTL 90 days + cap 50k)
-3. For each subscription (concurrent, rate-limited per domain):
+2. For each subscription (concurrent, rate-limited per domain):
    - RSS: Fetch (with ETag/If-Modified-Since) -> Parse -> Extract items
-   - For each item: compute dedup key `sha256(link + title + channel_name)`, INSERT OR IGNORE
-   - If inserted (new): send notification via apprise
+   - Canonicalize each HTTP(S) item link and compute a binary SHA-256 link key
+   - Atomically insert `(physical destination, link key)` and a durable outbox row
+3. Drain each destination outbox sequentially via apprise
 4. Print summary: "3 new, 47 unchanged, 0 errors"
 
 ### Dedup Model
 
-Items identified by `sha256(link + title + channel_name)`. If hash exists, already sent. On first subscribe, all current items pre-seeded (baseline). Use `--send-existing` to skip baseline.
+Items are identified by a conservative canonical original link. The permanent database key is `(physical destination, SHA-256(canonical link))`; titles, channel names, and subscription URLs are not identity fields. A title edit, channel rename, duplicate feed entry, or duplicate subscription therefore cannot resend the link to the same destination.
 
-Same URL, multiple channels: allowed. Each channel has its own dedup space.
+The same URL may be sent once to each distinct physical destination. Channels that share a destination, including channels collapsed by `WACHI_APPRISE_URL`, share one delivery history.
 
-### Dedup Cleanup
+### Retention
 
-At start of every `wachi check`:
-- **TTL**: Delete records older than 90 days
-- **Count cap**: If >50,000 records, delete oldest until 50,000
-
-Configurable:
-```yaml
-cleanup:
-  ttl_days: 90
-  max_records: 50000
-```
+Delivery keys are compact and permanent. Successful outbox payloads are deleted immediately; only unresolved retry/uncertain payloads remain. Legacy `cleanup` config is accepted for compatibility but does not delete delivery keys.
 
 ## CLI Output Formats
 
@@ -123,10 +114,6 @@ Config at `~/.config/wachi/config.yml` (XDG). Created with `0600` permissions on
 
 Full config example:
 ```yaml
-cleanup:
-  ttl_days: 90
-  max_records: 50000
-
 channels:
   - name: "main"
     apprise_url: "slack://xoxb-token/channel"
@@ -169,7 +156,7 @@ Uses ETag/If-Modified-Since for bandwidth efficiency on subsequent fetches.
 
 ### Baseline Behavior
 
-Default: pre-seed all current items into dedup (no notifications on first check). With `--send-existing` / `-e`: skip seeding, send all on next check.
+Default: baseline older current items and send the latest link once. With `--send-existing` / `-e`, skip seeding and send all current links on the next check.
 
 ## Notification Delivery
 
@@ -184,11 +171,12 @@ Default: pre-seed all current items into dedup (no notifications on first check)
 ### Behavior
 
 - 1 item = 1 message
-- Same channel: sequential (preserves chronological order)
-- Different channels: parallel
+- Same physical destination: sequential
+- Different destinations: parallel
 - Within channel: oldest first
-- 30s timeout per notification
-- Failed notification: item NOT recorded in dedup (retried next check)
+- 8s timeout per notification
+- Failure before dispatch: retain pending outbox work with backoff
+- Failure after dispatch starts: retain an uncertain record and do not retry automatically
 - Auto-installs `uv` if `uvx` not available
 
 ### Test Notification

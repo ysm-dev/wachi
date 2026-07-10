@@ -59,7 +59,7 @@ wachi sub -n <name> [-a <apprise-url>] <url>
   (link tags, common paths)
 ```
 
-On `wachi check`, each subscription is fetched and compared against a dedup table. New items trigger notifications via apprise. Old items are skipped. That's it.
+On `wachi check`, item links are canonicalized and atomically admitted to a permanent per-destination delivery ledger. New links enter a durable outbox and are sent via apprise; a link already accepted for that physical destination is always skipped, even if its title, subscription, or channel name changes.
 
 ## Commands
 
@@ -163,6 +163,7 @@ channels:
 ```
 
 Each channel entry requires `name`. Names must be unique (case-insensitive).
+The same RSS feed cannot be configured more than once for the same physical notification destination.
 
 All fields are optional with sensible defaults. An empty config file is valid.
 
@@ -186,10 +187,12 @@ For `x.com` / `twitter.com` items, `wachi` archives the transformed notification
 ## Design
 
 - **Stateless checks** -- `wachi check` is a one-shot command. Bring your own scheduler (cron, crnd, systemd, launchd)
-- **Dedup, not state** -- items tracked by `sha256(link + title + channel)`. If the hash exists, it was already sent
+- **Permanent link identity** -- compact binary keys track each canonical link once per physical destination and are never expired
+- **Durable outbox** -- items are admitted transactionally before delivery, so feed changes and process restarts cannot lose queued work
+- **Conservative retries** -- pre-dispatch failures retry; ambiguous post-dispatch failures are retained as uncertain to prevent duplicates
+- **Baseline seeding** -- older current items are seeded and the latest item is sent once; `--send-existing` defers every current item to the next check
+- **SQLite WAL mode** -- composite constraints and delivery leases coordinate concurrent checks
 - **No interactive prompts** -- ever. Errors tell you exactly what to set and where (What / Why / Fix pattern)
-- **Baseline seeding** -- on subscribe, all current items are pre-seeded so your channel isn't flooded
-- **SQLite WAL mode** -- safe concurrent reads. Two cron jobs won't conflict
 - **Atomic config writes** -- write to temp, then rename. No corruption from concurrent access
 - **JSON envelope** -- `--json` on all commands returns `{"ok": true, "data": {...}}` or `{"ok": false, "error": {"what", "why", "fix"}}`
 

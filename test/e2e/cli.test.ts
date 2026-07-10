@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "../../src/version.ts";
@@ -26,6 +26,13 @@ const createFeed = (title: string, link: string): string => {
 <rss version="2.0"><channel><title>Test Feed</title>
 <item><title>${title}</title><link>${link}</link><guid>${link}</guid></item>
 </channel></rss>`;
+};
+
+const createFakeAppriseBin = async (dir: string): Promise<string> => {
+  const binDir = join(dir, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(join(binDir, "uvx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return binDir;
 };
 
 const testDirs: string[] = [];
@@ -67,6 +74,7 @@ describe("wachi CLI", () => {
     testDirs.push(dir);
     const configPath = join(dir, "config.yml");
     const dbPath = join(dir, "wachi.db");
+    const binDir = await createFakeAppriseBin(dir);
 
     let feedXml = createFeed("Item 1", "https://example.com/1");
     const server = Bun.serve({
@@ -85,7 +93,9 @@ describe("wachi CLI", () => {
     const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
 
     const baseEnv = {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
       WACHI_DB_PATH: dbPath,
+      WACHI_NO_ARCHIVE: "1",
       WACHI_NO_AUTO_UPDATE: "1",
     };
 
@@ -145,6 +155,7 @@ describe("wachi CLI", () => {
 
     const baseEnv = {
       WACHI_DB_PATH: dbPath,
+      WACHI_NO_ARCHIVE: "1",
       WACHI_NO_AUTO_UPDATE: "1",
     };
 
@@ -179,6 +190,7 @@ describe("wachi CLI", () => {
     testDirs.push(dir);
     const configPath = join(dir, "config.yml");
     const dbPath = join(dir, "wachi.db");
+    const binDir = await createFakeAppriseBin(dir);
 
     const server = Bun.serve({
       port: 0,
@@ -205,7 +217,9 @@ describe("wachi CLI", () => {
     const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
     const originUrl = `http://127.0.0.1:${server.port}/site`;
     const baseEnv = {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
       WACHI_DB_PATH: dbPath,
+      WACHI_NO_ARCHIVE: "1",
       WACHI_NO_AUTO_UPDATE: "1",
     };
 

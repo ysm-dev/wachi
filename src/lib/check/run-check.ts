@@ -5,8 +5,11 @@ import { flushArchivePool } from "../archive/pool.ts";
 import { printJsonSuccess, printStdout } from "../cli/io.ts";
 import { toChannelNameKey } from "../config/channel-name-key.ts";
 import { readConfig } from "../config/read.ts";
-import { cleanupSentItems } from "../db/cleanup-sent-items.ts";
 import { connectDb } from "../db/connect.ts";
+import { resolveDestinationId } from "../db/delivery-ledger.ts";
+import { buildDestinationKey } from "../notify/destination-identity.ts";
+import { backfillLegacyDeliveryKeys } from "./delivery-cutover.ts";
+import { drainDestinationOutbox } from "./drain-outbox.ts";
 import type { CheckStats } from "./handle-items.ts";
 import { processSubscriptionCheck } from "./process-subscription.ts";
 
@@ -86,12 +89,6 @@ export const runCheck = async ({
   const env = getEnv();
 
   try {
-    cleanupSentItems(
-      db,
-      configState.config.cleanup.ttl_days,
-      configState.config.cleanup.max_records,
-    );
-
     const channels = name
       ? configState.config.channels.filter(
           (entry) => toChannelNameKey(entry.name) === toChannelNameKey(name),
@@ -102,15 +99,21 @@ export const runCheck = async ({
     const limit = pLimit(Math.max(1, concurrency));
     const enqueueForChannel = createChannelQueue();
     const tasks: Array<Promise<void>> = [];
+    const destinations = new Map<number, { destinationId: number; effectiveChannelUrl: string }>();
 
     for (const channelEntry of channels) {
+      const effectiveChannelUrl = env.appriseUrlOverride ?? channelEntry.apprise_url;
+      const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+      destinations.set(destinationId, { destinationId, effectiveChannelUrl });
+      backfillLegacyDeliveryKeys(db, destinationId, channelEntry.name);
+
       for (const subscription of channelEntry.subscriptions) {
         tasks.push(
           limit(async () => {
-            const effectiveChannelUrl = env.appriseUrlOverride ?? channelEntry.apprise_url;
             await processSubscriptionCheck({
               channelName: channelEntry.name,
               effectiveChannelUrl,
+              destinationId,
               subscription,
               db,
               dryRun,
@@ -126,6 +129,22 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
+    if (!dryRun) {
+      await Promise.all(
+        [...destinations.values()].map(({ destinationId, effectiveChannelUrl }) =>
+          enqueueForChannel(String(destinationId), () =>
+            drainDestinationOutbox({
+              db,
+              destinationId,
+              effectiveChannelUrl,
+              isJson,
+              isVerbose,
+              stats,
+            }),
+          ),
+        ),
+      );
+    }
     await flushArchivePool();
     printFinalSummary(stats, dryRun, isJson);
     return resolveExitCode(stats);

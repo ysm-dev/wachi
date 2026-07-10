@@ -306,9 +306,11 @@ runCheck()  ──── 각 subscription 마다 ────┐
                                            ↓
                               handleSubscriptionItems()
                                            ↓
-                       per item: insertDedupRecord()
-                                           ↓
-                              sendNotification()  ◄── 기존 경로, 수정 없음
+                    permanent key + outbox row 등록
+                                            ↓
+                         drainDestinationOutbox()
+                                            ↓
+                              sendNotification()
                                            ↓                        │
                        ┌───────────────────┴──────────────────┐    │
                        │ (성공)                                │    │

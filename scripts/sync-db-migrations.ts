@@ -27,14 +27,14 @@ const run = async (): Promise<void> => {
   }
 
   const importLines: string[] = [];
-  const migrationNames: string[] = [];
+  const migrationEntries: string[] = [];
 
   for (const [index, entry] of entries.entries()) {
     const identifier = toIdentifier(index);
     importLines.push(
       `import ${identifier} from "../../../drizzle/${entry.tag}.sql" with { type: "text" };`,
     );
-    migrationNames.push(identifier);
+    migrationEntries.push(`{ id: "${entry.tag}", sql: ${identifier} }`);
   }
 
   const output = [
@@ -42,7 +42,9 @@ const run = async (): Promise<void> => {
     "// Do not edit manually.",
     ...importLines,
     "",
-    `export const generatedMigrations = [${migrationNames.join(", ")}] as const;`,
+    "export const generatedMigrations = [",
+    ...migrationEntries.map((entry) => `  ${entry},`),
+    "] as const;",
     "",
   ].join("\n");
 

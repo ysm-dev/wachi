@@ -7,7 +7,7 @@ import { http } from "../http/client.ts";
 import { waitForDomainRateLimit } from "../http/rate-limit.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
 import { parseRssFeed } from "../rss/parse.ts";
-import { resolveUrl } from "../url/resolve.ts";
+import { canonicalizeItemUrl } from "../url/canonicalize-item-url.ts";
 import { loadWebsiteBranding } from "./load-website-branding.ts";
 import { fallbackWebsiteTitle, googleS2FaviconUrl } from "./source-branding.ts";
 import { subscriptionItemSchema } from "./subscription-item.ts";
@@ -21,6 +21,7 @@ const fetchRssItemsOptionsSchema = z.object({
   rssUrl: z.string(),
   db: z.custom<WachiDb>().optional(),
   useConditionalRequest: z.boolean().optional(),
+  validatorScope: z.string().optional(),
 });
 
 type FetchRssItemsOptions = z.infer<typeof fetchRssItemsOptionsSchema>;
@@ -34,12 +35,41 @@ const fetchRssItemsResultSchema = z.object({
       avatarUrl: z.string().url().optional(),
     })
     .optional(),
+  validators: z.object({
+    etag: z.string().nullable(),
+    lastModified: z.string().nullable(),
+  }),
 });
 
 export type FetchRssItemsResult = z.infer<typeof fetchRssItemsResultSchema>;
 
-const etagMetaKey = (rssUrl: string): string => `etag:${rssUrl}`;
-const lastModifiedMetaKey = (rssUrl: string): string => `last-modified:${rssUrl}`;
+const validatorKey = (rssUrl: string, validatorScope?: string): string => {
+  return validatorScope ? `${validatorScope}:${rssUrl}` : rssUrl;
+};
+
+const etagMetaKey = (rssUrl: string, validatorScope?: string): string =>
+  `etag:${validatorKey(rssUrl, validatorScope)}`;
+const lastModifiedMetaKey = (rssUrl: string, validatorScope?: string): string =>
+  `last-modified:${validatorKey(rssUrl, validatorScope)}`;
+
+export type RssValidators = {
+  etag: string | null;
+  lastModified: string | null;
+};
+
+export const persistRssValidators = (
+  db: WachiDb,
+  rssUrl: string,
+  validators: RssValidators,
+  validatorScope?: string,
+): void => {
+  if (validators.etag) {
+    setMetaValue(db, etagMetaKey(rssUrl, validatorScope), validators.etag);
+  }
+  if (validators.lastModified) {
+    setMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope), validators.lastModified);
+  }
+};
 
 const resolveOptionalHttpUrl = (value: string | null, baseUrl: string): string | null => {
   if (!value) {
@@ -93,6 +123,7 @@ export const fetchRssSubscriptionItems = async ({
   rssUrl,
   db,
   useConditionalRequest = false,
+  validatorScope,
 }: FetchRssItemsOptions): Promise<FetchRssItemsResult> => {
   await waitForDomainRateLimit(rssUrl);
 
@@ -101,8 +132,8 @@ export const fetchRssSubscriptionItems = async ({
   };
 
   if (useConditionalRequest && db) {
-    const etag = getMetaValue(db, etagMetaKey(rssUrl));
-    const lastModified = getMetaValue(db, lastModifiedMetaKey(rssUrl));
+    const etag = getMetaValue(db, etagMetaKey(rssUrl, validatorScope));
+    const lastModified = getMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope));
     if (etag) {
       headers["If-None-Match"] = etag;
     }
@@ -121,7 +152,14 @@ export const fetchRssSubscriptionItems = async ({
   });
 
   if (response.status === 304) {
-    return { notModified: true, items: [] };
+    return {
+      notModified: true,
+      items: [],
+      validators: {
+        etag: response.headers.get("etag"),
+        lastModified: response.headers.get("last-modified"),
+      },
+    };
   }
 
   if (response.status >= 400) {
@@ -132,19 +170,8 @@ export const fetchRssSubscriptionItems = async ({
     );
   }
 
-  if (db) {
-    const etag = response.headers.get("etag");
-    const lastModified = response.headers.get("last-modified");
-    if (etag) {
-      setMetaValue(db, etagMetaKey(rssUrl), etag);
-    }
-    if (lastModified) {
-      setMetaValue(db, lastModifiedMetaKey(rssUrl), lastModified);
-    }
-  }
-
   const xml = typeof response._data === "string" ? response._data : "";
-  const parsed = await parseRssFeed(xml, subscriptionUrl);
+  const parsed = await parseRssFeed(xml, rssUrl);
   const sourceIdentity = await buildSourceIdentity({
     subscriptionUrl,
     rssUrl,
@@ -157,9 +184,13 @@ export const fetchRssSubscriptionItems = async ({
     notModified: false,
     items: parsed.items.map((item) => ({
       title: item.title,
-      link: resolveUrl(item.link, subscriptionUrl),
+      link: canonicalizeItemUrl(item.link, rssUrl) ?? item.link,
       publishedAt: item.publishedAt,
     })),
     sourceIdentity,
+    validators: {
+      etag: response.headers.get("etag"),
+      lastModified: response.headers.get("last-modified"),
+    },
   };
 };

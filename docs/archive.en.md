@@ -312,9 +312,11 @@ runCheck()  ──── for each subscription ────┐
                                             ↓
                               handleSubscriptionItems()
                                             ↓
-                       per item: insertDedupRecord()
+                    admit permanent key + outbox row
                                             ↓
-                              sendNotification()  ◄── existing path, untouched
+                          drainDestinationOutbox()
+                                            ↓
+                              sendNotification()
                                             ↓                        │
                        ┌────────────────────┴────────────────────┐  │
                        │ (success)                                │  │

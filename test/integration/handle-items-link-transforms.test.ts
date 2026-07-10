@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { drainDestinationOutbox } from "../../src/lib/check/drain-outbox.ts";
 import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import { handleSubscriptionItems } from "../../src/lib/check/handle-items.ts";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
+import { resolveDestinationId } from "../../src/lib/db/delivery-ledger.ts";
+import { buildDestinationKey } from "../../src/lib/notify/destination-identity.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
 
 type MockProc = {
@@ -60,10 +63,6 @@ afterEach(async () => {
   }
 });
 
-const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>): Promise<void> => {
-  await task();
-};
-
 const makeStats = (): CheckStats => ({ sent: [], skipped: 0, errors: [], networkSkipped: 0 });
 
 describe("handleSubscriptionItems with linkTransforms", () => {
@@ -71,19 +70,29 @@ describe("handleSubscriptionItems with linkTransforms", () => {
     const db = connection?.db;
     if (!db) throw new Error("db not initialized");
 
+    const effectiveChannelUrl = "slack://token/channel";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
     const stats = makeStats();
     await handleSubscriptionItems({
       items: [{ title: "Tweet Thread", link: "https://x.com/user/status/123456" }],
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: [{ from: "x.com", to: "fixupx.com" }],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
 
     expect(capturedBodies).toHaveLength(1);
@@ -93,45 +102,65 @@ describe("handleSubscriptionItems with linkTransforms", () => {
     expect(stats.sent).toHaveLength(1);
   });
 
-  it("dedup uses original link (second call is skipped even with transforms)", async () => {
+  it("does not admit or send the same link again when its title changes", async () => {
     const db = connection?.db;
     if (!db) throw new Error("db not initialized");
 
     const items = [{ title: "Tweet", link: "https://x.com/user/status/999" }];
     const transforms = [{ from: "x.com", to: "fixupx.com" }];
+    const effectiveChannelUrl = "slack://token/channel";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
 
     const stats1 = makeStats();
-    await handleSubscriptionItems({
+    const admitted1 = await handleSubscriptionItems({
       items,
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats: stats1,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: transforms,
     });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats1,
+    });
+    expect(admitted1).toBe(1);
     expect(stats1.sent).toHaveLength(1);
     expect(capturedBodies).toHaveLength(1);
 
-    // Same item again → deduped, no second notification
+    // The title is not part of destination-level link identity.
     const stats2 = makeStats();
-    await handleSubscriptionItems({
-      items,
+    const admitted2 = await handleSubscriptionItems({
+      items: [{ title: "Retitled Tweet", link: items[0]?.link ?? "" }],
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats: stats2,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: transforms,
     });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats2,
+    });
+    expect(admitted2).toBe(0);
     expect(stats2.skipped).toBe(1);
     expect(stats2.sent).toHaveLength(0);
     expect(capturedBodies).toHaveLength(1); // no new call
@@ -142,20 +171,30 @@ describe("handleSubscriptionItems with linkTransforms", () => {
     if (!db) throw new Error("db not initialized");
 
     const items = [{ title: "Tweet", link: "https://x.com/user/status/777" }];
+    const effectiveChannelUrl = "slack://token/channel";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
 
     const stats1 = makeStats();
     await handleSubscriptionItems({
       items,
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats: stats1,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: [{ from: "x.com", to: "fixupx.com" }],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats1,
     });
     expect(stats1.sent).toHaveLength(1);
 
@@ -164,17 +203,89 @@ describe("handleSubscriptionItems with linkTransforms", () => {
     await handleSubscriptionItems({
       items,
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats: stats2,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: [{ from: "x.com", to: "vxtwitter.com" }],
     });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats2,
+    });
     expect(stats2.skipped).toBe(1);
+    expect(capturedBodies).toHaveLength(1);
+  });
+
+  it("sends the same link once across subscriptions sharing a destination", async () => {
+    const db = connection?.db;
+    if (!db) throw new Error("db not initialized");
+
+    const effectiveChannelUrl = "slack://token/channel";
+    const firstDestinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+    const secondDestinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+    expect(secondDestinationId).toBe(firstDestinationId);
+
+    const link = "https://example.com/shared-post";
+    const stats1 = makeStats();
+    const admitted1 = await handleSubscriptionItems({
+      items: [{ title: "Shared Post", link }],
+      channelName: "main",
+      destinationId: firstDestinationId,
+      subscriptionUrl: "https://first.example/feed.xml",
+      db,
+      dryRun: false,
+      baseline: false,
+      isJson: true,
+      isVerbose: false,
+      stats: stats1,
+      linkTransforms: [],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId: firstDestinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats1,
+    });
+
+    const stats2 = makeStats();
+    const admitted2 = await handleSubscriptionItems({
+      items: [{ title: "Shared Post From Another Feed", link }],
+      channelName: "main",
+      destinationId: secondDestinationId,
+      subscriptionUrl: "https://second.example/feed.xml",
+      db,
+      dryRun: false,
+      baseline: false,
+      isJson: true,
+      isVerbose: false,
+      stats: stats2,
+      linkTransforms: [],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId: secondDestinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats: stats2,
+    });
+
+    expect(admitted1).toBe(1);
+    expect(admitted2).toBe(0);
+    expect(stats1.sent).toHaveLength(1);
+    expect(stats2.skipped).toBe(1);
+    expect(stats2.sent).toHaveLength(0);
     expect(capturedBodies).toHaveLength(1);
   });
 
@@ -182,19 +293,29 @@ describe("handleSubscriptionItems with linkTransforms", () => {
     const db = connection?.db;
     if (!db) throw new Error("db not initialized");
 
+    const effectiveChannelUrl = "slack://token/channel";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
     const stats = makeStats();
     await handleSubscriptionItems({
       items: [{ title: "Post", link: "https://x.com/user/status/555" }],
       channelName: "main",
-      effectiveChannelUrl: "slack://token/channel",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: [],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
 
     expect(capturedBodies).toHaveLength(1);

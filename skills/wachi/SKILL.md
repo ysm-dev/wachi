@@ -64,7 +64,7 @@ wachi upgrade                     Update wachi to latest version
 
 1. `wachi sub` checks if the URL has an RSS feed (auto-discovery via `<link>` tags and common paths)
 2. If RSS found: store and use RSS for ongoing checks
-3. `wachi check` fetches each subscription, compares against dedup table (SHA-256 hash), sends new items via apprise
+3. `wachi check` canonicalizes item links, atomically admits each link once per physical destination, and drains a durable apprise delivery outbox
 
 ## Configuration
 

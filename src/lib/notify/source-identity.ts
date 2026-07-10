@@ -95,7 +95,7 @@ const normalizeSlackWebhookUrl = (parsed: URL): URL | null => {
   return normalized;
 };
 
-const normalizeRawWebhookUrl = (parsed: URL): URL => {
+export const normalizeRawWebhookUrl = (parsed: URL): URL => {
   const discordUrl = normalizeDiscordWebhookUrl(parsed);
   if (discordUrl) {
     return discordUrl;

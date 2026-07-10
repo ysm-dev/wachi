@@ -31,4 +31,27 @@ describe("config schema", () => {
       ).toBe(true);
     }
   });
+
+  it("rejects duplicate RSS subscriptions targeting the same destination", () => {
+    const result = userConfigSchema.safeParse({
+      channels: [
+        {
+          name: "first",
+          apprise_url: "discord://123/token-a",
+          subscriptions: [
+            { url: "https://example.com/one", rss_url: "https://example.com/feed.xml" },
+          ],
+        },
+        {
+          name: "second",
+          apprise_url: "discord://123/token-b",
+          subscriptions: [
+            { url: "https://example.com/two", rss_url: "https://example.com/feed.xml#fragment" },
+          ],
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
 });

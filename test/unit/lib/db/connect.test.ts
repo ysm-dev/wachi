@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sentItems } from "../../../../src/lib/db/schema.ts";
@@ -59,15 +59,14 @@ afterEach(async () => {
 });
 
 describe("connectDb", () => {
-  it("recovers from a corrupted database file by resetting it", async () => {
+  it("fails closed without deleting a corrupted database", async () => {
     const dbPath = join(tempDir, "wachi.db");
-    await writeFile(dbPath, "not a sqlite database", "utf8");
+    const contents = "not a sqlite database";
+    await writeFile(dbPath, contents, "utf8");
 
-    connection = await connectDb(dbPath);
+    await expect(connectDb(dbPath)).rejects.toBeInstanceOf(WachiError);
 
-    expect(connection.path).toBe(dbPath);
-    const rows = connection.db.select().from(sentItems).all();
-    expect(rows).toHaveLength(0);
+    expect(await readFile(dbPath, "utf8")).toBe(contents);
   });
 
   it("wraps open failures in WachiError", async () => {
@@ -94,6 +93,73 @@ describe("connectDb", () => {
 
     expect(connection.path).toBe(canonicalDbPath);
     expect(await pathExists(canonicalDbPath)).toBe(true);
+  });
+
+  it("sets durability and integrity pragmas", async () => {
+    connection = await connectDb(join(tempDir, "wachi.db"));
+
+    expect(connection.sqlite.query("PRAGMA busy_timeout").values()[0]?.[0]).toBe(5000);
+    expect(connection.sqlite.query("PRAGMA journal_mode").values()[0]?.[0]).toBe("wal");
+    expect(connection.sqlite.query("PRAGMA foreign_keys").values()[0]?.[0]).toBe(1);
+    expect(connection.sqlite.query("PRAGMA synchronous").values()[0]?.[0]).toBe(2);
+  });
+
+  it("creates strict ledger tables without rowids where keys permit it", async () => {
+    connection = await connectDb(join(tempDir, "wachi.db"));
+
+    const rows = connection.sqlite
+      .query<{ name: string; sql: string }, []>(
+        "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name IN ('destinations', 'delivery_keys', 'delivery_outbox', 'schema_migrations')",
+      )
+      .all();
+    const definitions = new Map(rows.map((row) => [row.name, row.sql.toUpperCase()]));
+
+    expect(definitions.get("destinations")).toContain("STRICT");
+    expect(definitions.get("delivery_keys")).toContain("STRICT, WITHOUT ROWID");
+    expect(definitions.get("delivery_outbox")).toContain("STRICT, WITHOUT ROWID");
+    expect(definitions.get("schema_migrations")).toContain("STRICT, WITHOUT ROWID");
+  });
+
+  it("tracks migrations and does not reapply them", async () => {
+    const dbPath = join(tempDir, "wachi.db");
+    connection = await connectDb(dbPath);
+    const first = connection.sqlite
+      .query<{ id: string; applied_at: string }, []>(
+        "SELECT id, applied_at FROM schema_migrations ORDER BY id",
+      )
+      .all();
+    connection.sqlite.close();
+    connection = await connectDb(dbPath);
+    const second = connection.sqlite
+      .query<{ id: string; applied_at: string }, []>(
+        "SELECT id, applied_at FROM schema_migrations ORDER BY id",
+      )
+      .all();
+
+    expect(first.map((row) => row.id)).toEqual([
+      "0000_init",
+      "0001_add-indexes",
+      "0002_public_yellow_claw",
+    ]);
+    expect(second).toEqual(first);
+  });
+
+  it("adopts an existing untracked database idempotently", async () => {
+    const dbPath = join(tempDir, "wachi.db");
+    connection = await connectDb(dbPath);
+    connection.sqlite.exec("DROP TABLE schema_migrations");
+    connection.sqlite.close();
+
+    connection = await connectDb(dbPath);
+
+    const tracked = connection.sqlite
+      .query<{ id: string }, []>("SELECT id FROM schema_migrations ORDER BY id")
+      .all();
+    expect(tracked.map((row) => row.id)).toEqual([
+      "0000_init",
+      "0001_add-indexes",
+      "0002_public_yellow_claw",
+    ]);
   });
 
   it("migrates a legacy runtime database to canonical default path", async () => {

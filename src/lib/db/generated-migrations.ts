@@ -2,5 +2,10 @@
 // Do not edit manually.
 import migration0000 from "../../../drizzle/0000_init.sql" with { type: "text" };
 import migration0001 from "../../../drizzle/0001_add-indexes.sql" with { type: "text" };
+import migration0002 from "../../../drizzle/0002_public_yellow_claw.sql" with { type: "text" };
 
-export const generatedMigrations = [migration0000, migration0001] as const;
+export const generatedMigrations = [
+  { id: "0000_init", sql: migration0000 },
+  { id: "0001_add-indexes", sql: migration0001 },
+  { id: "0002_public_yellow_claw", sql: migration0002 },
+] as const;

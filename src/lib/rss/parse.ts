@@ -125,6 +125,13 @@ const sanitizeInvalidDates = (xml: string): string => {
   return xml.replace(/<(updated|published|pubDate|dc:date)>\s*null\s*<\/\1>/gi, "<$1></$1>");
 };
 
+const isUrlLikeGuid = (value: string | undefined): value is string => {
+  if (!value) {
+    return false;
+  }
+  return /^(?:https?:\/\/|\/|\.\.?\/)/i.test(value.trim());
+};
+
 export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promise<ParsedFeed> => {
   const parser = new Parser({
     customFields: {
@@ -134,7 +141,7 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
   const feed = await parser.parseString(sanitizeInvalidDates(xml));
 
   const items = feed.items.map((item) => {
-    const link = item.link ?? item.guid ?? subscriptionUrl;
+    const link = item.link ?? (isUrlLikeGuid(item.guid) ? item.guid : "");
     const title = item.title ?? item.contentSnippet?.slice(0, 100) ?? "Untitled";
 
     return {

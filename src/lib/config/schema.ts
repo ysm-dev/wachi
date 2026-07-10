@@ -1,7 +1,10 @@
 import { z } from "zod";
+import { buildDestinationKey } from "../notify/destination-identity.ts";
+import { canonicalizeItemUrl } from "../url/canonicalize-item-url.ts";
 import { toChannelNameKey } from "./channel-name-key.ts";
 
 export const cleanupConfigSchema = z.object({
+  // Accepted for compatibility with existing configs. Delivery keys are permanent.
   ttl_days: z.number().int().positive().default(90),
   max_records: z.number().int().positive().default(50_000),
 });
@@ -19,6 +22,7 @@ export const channelSchema = z.object({
 
 const channelsSchema = z.array(channelSchema).superRefine((channels, context) => {
   const seen = new Set<string>();
+  const subscriptionsByDestination = new Map<string, Set<string>>();
 
   for (const [index, channel] of channels.entries()) {
     const key = toChannelNameKey(channel.name);
@@ -32,6 +36,29 @@ const channelsSchema = z.array(channelSchema).superRefine((channels, context) =>
     }
 
     seen.add(key);
+
+    let destinationKey: string;
+    try {
+      destinationKey = buildDestinationKey(channel.apprise_url).toString("hex");
+    } catch {
+      continue;
+    }
+    const destinationSubscriptions =
+      subscriptionsByDestination.get(destinationKey) ?? new Set<string>();
+    subscriptionsByDestination.set(destinationKey, destinationSubscriptions);
+
+    for (const [subscriptionIndex, subscription] of channel.subscriptions.entries()) {
+      const rssUrl = canonicalizeItemUrl(subscription.rss_url) ?? subscription.rss_url;
+      if (destinationSubscriptions.has(rssUrl)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "RSS subscriptions must be unique per notification destination.",
+          path: [index, "subscriptions", subscriptionIndex, "rss_url"],
+        });
+        continue;
+      }
+      destinationSubscriptions.add(rssUrl);
+    }
   }
 });
 

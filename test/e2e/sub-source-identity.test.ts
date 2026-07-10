@@ -101,13 +101,14 @@ printf '%s' "$last" > "$WACHI_TEST_UVX_ARGS"
       {
         PATH: `${binDir}:${process.env.PATH ?? ""}`,
         WACHI_DB_PATH: dbPath,
+        WACHI_NO_ARCHIVE: "1",
         WACHI_NO_AUTO_UPDATE: "1",
         WACHI_TEST_UVX_ARGS: uvxArgsPath,
       },
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("Sent: Item 1");
+    expect(result.stdout).toContain("sent: Item 1 -> main");
     expect(result.stderr).not.toContain("Warning: failed to send latest item notification");
 
     const personalizedUrl = decodeURIComponent(await readFile(uvxArgsPath, "utf8"));

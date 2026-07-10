@@ -11,6 +11,7 @@ type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 const processSubscriptionOptionsSchema = z.object({
   channelName: z.string(),
   effectiveChannelUrl: z.string(),
+  destinationId: z.number().int().positive(),
   subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
   dryRun: z.boolean(),
@@ -26,6 +27,7 @@ type ProcessSubscriptionOptions = z.infer<typeof processSubscriptionOptionsSchem
 export const processSubscriptionCheck = async ({
   channelName,
   effectiveChannelUrl,
+  destinationId,
   subscription,
   db,
   dryRun,
@@ -38,14 +40,13 @@ export const processSubscriptionCheck = async ({
   try {
     await checkRssSubscription({
       channelName,
-      effectiveChannelUrl,
+      destinationId,
       subscription,
       db,
       dryRun,
       isJson,
       isVerbose,
       stats,
-      enqueueForChannel,
       linkTransforms,
     });
   } catch (error) {

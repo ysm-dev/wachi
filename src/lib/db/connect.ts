@@ -24,10 +24,35 @@ const createConnectedDb = (sqlite: Database, db: WachiDb, path: string) => {
 
 export type ConnectedDb = ReturnType<typeof createConnectedDb>;
 
+const MIGRATIONS_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  id TEXT PRIMARY KEY NOT NULL,
+  applied_at TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+`;
+
 const applyGeneratedMigrations = (sqlite: Database): void => {
-  for (const sql of generatedMigrations) {
-    sqlite.exec(sql);
-  }
+  sqlite.exec(MIGRATIONS_TABLE_SQL);
+
+  const hasMigration = sqlite.query<{ applied: number }, [string]>(
+    "SELECT 1 AS applied FROM schema_migrations WHERE id = ?",
+  );
+  const recordMigration = sqlite.query(
+    "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+  );
+
+  const migrate = sqlite.transaction(() => {
+    for (const migration of generatedMigrations) {
+      if (hasMigration.get(migration.id)) {
+        continue;
+      }
+
+      sqlite.exec(migration.sql);
+      recordMigration.run(migration.id, new Date().toISOString());
+    }
+  });
+
+  migrate.immediate();
 };
 
 const removeDbFiles = async (dbPath: string): Promise<void> => {
@@ -108,12 +133,19 @@ const resolveDbPath = async (dbPathOverride?: string): Promise<string> => {
 
 const initializeSqlite = async (path: string): Promise<ConnectedDb> => {
   const sqlite = new Database(path, { create: true });
-  sqlite.exec("PRAGMA journal_mode = WAL;");
-  sqlite.exec("PRAGMA busy_timeout = 5000;");
+  try {
+    sqlite.exec("PRAGMA busy_timeout = 5000;");
+    sqlite.exec("PRAGMA journal_mode = WAL;");
+    sqlite.exec("PRAGMA foreign_keys = ON;");
+    sqlite.exec("PRAGMA synchronous = FULL;");
 
-  applyGeneratedMigrations(sqlite);
-  const db = createDrizzleDb(sqlite);
-  return createConnectedDb(sqlite, db, path);
+    applyGeneratedMigrations(sqlite);
+    const db = createDrizzleDb(sqlite);
+    return createConnectedDb(sqlite, db, path);
+  } catch (error) {
+    sqlite.close();
+    throw error;
+  }
 };
 
 export const connectDb = async (dbPathOverride?: string): Promise<ConnectedDb> => {
@@ -122,20 +154,11 @@ export const connectDb = async (dbPathOverride?: string): Promise<ConnectedDb> =
 
   try {
     return await initializeSqlite(dbPath);
-  } catch {
-    try {
-      await removeDbFiles(dbPath);
-      const connection = await initializeSqlite(dbPath);
-      process.stderr.write(
-        "Warning: Database was corrupted and has been reset. Dedup history lost -- some items may be re-sent on next check.\n",
-      );
-      return connection;
-    } catch (error) {
-      throw new WachiError(
-        `Failed to open database at ${dbPath}`,
-        error instanceof Error ? error.message : "Could not open sqlite database.",
-        "Check filesystem permissions or set WACHI_DB_PATH to a writable location.",
-      );
-    }
+  } catch (error) {
+    throw new WachiError(
+      `Failed to open database at ${dbPath}`,
+      error instanceof Error ? error.message : "Could not open sqlite database.",
+      "Check filesystem permissions or set WACHI_DB_PATH to a writable location.",
+    );
   }
 };

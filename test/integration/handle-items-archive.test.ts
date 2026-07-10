@@ -3,9 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { flushArchivePool, resetArchivePoolForTest } from "../../src/lib/archive/pool.ts";
+import { drainDestinationOutbox } from "../../src/lib/check/drain-outbox.ts";
 import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import { handleSubscriptionItems } from "../../src/lib/check/handle-items.ts";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
+import { resolveDestinationId } from "../../src/lib/db/delivery-ledger.ts";
+import { buildDestinationKey } from "../../src/lib/notify/destination-identity.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
 
 type MockProc = {
@@ -105,10 +108,6 @@ afterEach(async () => {
   }
 });
 
-const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>): Promise<void> => {
-  await task();
-};
-
 const makeStats = (): CheckStats => ({ sent: [], skipped: 0, errors: [], networkSkipped: 0 });
 
 describe("handleSubscriptionItems archive integration", () => {
@@ -119,18 +118,29 @@ describe("handleSubscriptionItems archive integration", () => {
     }
 
     const originalLink = "https://x.com/user/status/123456";
+    const effectiveChannelUrl = "discord://12345/token";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+    const stats = makeStats();
     await handleSubscriptionItems({
       items: [{ title: "Tweet Thread", link: originalLink }],
       channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
+      destinationId,
       subscriptionUrl: "https://x.com",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
-      stats: makeStats(),
-      enqueueForChannel: immediateEnqueue,
+      stats,
       linkTransforms: [{ from: "x.com", to: "fixupx.com" }],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
     await flushArchivePool(100);
 
@@ -149,18 +159,29 @@ describe("handleSubscriptionItems archive integration", () => {
     }
 
     const originalLink = "https://example.com/post";
+    const effectiveChannelUrl = "discord://12345/token";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+    const stats = makeStats();
     await handleSubscriptionItems({
       items: [{ title: "Post", link: originalLink }],
       channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
+      destinationId,
       subscriptionUrl: "https://example.com/feed.xml",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
-      stats: makeStats(),
-      enqueueForChannel: immediateEnqueue,
+      stats,
       linkTransforms: [{ from: "example.com", to: "mirror.example.com" }],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
     await flushArchivePool(100);
 
@@ -178,18 +199,29 @@ describe("handleSubscriptionItems archive integration", () => {
       throw new Error("db not initialized");
     }
 
+    const effectiveChannelUrl = "discord://12345/token";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
+    const stats = makeStats();
     await handleSubscriptionItems({
       items: [{ title: "Post", link: "https://example.com/post" }],
       channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
+      destinationId,
       subscriptionUrl: "https://example.com/feed.xml",
       db,
       dryRun: true,
+      baseline: false,
       isJson: true,
       isVerbose: false,
-      stats: makeStats(),
-      enqueueForChannel: immediateEnqueue,
+      stats,
       linkTransforms: [],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
     await flushArchivePool(100);
 
@@ -203,20 +235,30 @@ describe("handleSubscriptionItems archive integration", () => {
     }
 
     notificationShouldFail = true;
+    const effectiveChannelUrl = "discord://12345/token";
+    const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
     const stats = makeStats();
 
     await handleSubscriptionItems({
       items: [{ title: "Post", link: "https://example.com/post" }],
       channelName: "main",
-      effectiveChannelUrl: "discord://12345/token",
+      destinationId,
       subscriptionUrl: "https://example.com/feed.xml",
       db,
       dryRun: false,
+      baseline: false,
       isJson: true,
       isVerbose: false,
       stats,
-      enqueueForChannel: immediateEnqueue,
       linkTransforms: [],
+    });
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl,
+      isJson: true,
+      isVerbose: false,
+      stats,
     });
     await flushArchivePool(100);
 

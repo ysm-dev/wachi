@@ -9,7 +9,7 @@
     </item>
     <item>
       <title>Title Without Link</title>
-      <description>Missing link should fall back to guid or subscription URL.</description>
+      <description>Missing link should fall back to a URL-like guid.</description>
       <guid>https://example.com/title-without-link</guid>
       <pubDate>Thu, 12 Jan 2023 10:00:00 GMT</pubDate>
     </item>

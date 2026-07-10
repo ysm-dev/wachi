@@ -1,16 +1,18 @@
 import { z } from "zod";
-import { submitArchive } from "../archive/submit.ts";
 import { printStderr, printStdout } from "../cli/io.ts";
 import type { LinkTransform } from "../config/schema.ts";
-import { buildDedupHash } from "../db/build-dedup-hash.ts";
 import type { WachiDb } from "../db/connect.ts";
-import { deleteDedupRecord } from "../db/delete-dedup-record.ts";
-import { hasDedupHash } from "../db/has-dedup-hash.ts";
-import { insertDedupRecord } from "../db/insert-dedup-record.ts";
+import {
+  admitDeliveryKey,
+  admitDeliveryWithOutbox,
+  hasDeliveryKey,
+} from "../db/delivery-ledger.ts";
+import { serializeDeliverySource } from "../notify/delivery-source.ts";
 import { formatNotificationBody } from "../notify/format.ts";
-import { sendNotification } from "../notify/send.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
+import { buildLinkKey } from "../subscriptions/item-identity.ts";
 import { withLinkFallbackAvatar } from "../subscriptions/resolve-source-identity.ts";
+import { canonicalizeItemUrl } from "../url/canonicalize-item-url.ts";
 import { transformLink } from "../url/transform.ts";
 
 const sentRecordSchema = z.object({
@@ -37,20 +39,17 @@ const itemSchema = z.object({
 
 type Item = z.infer<typeof itemSchema>;
 
-const enqueueForChannelSchema =
-  z.custom<(channelUrl: string, task: () => Promise<void>) => Promise<void>>();
-
 const handleItemsOptionsSchema = z.object({
   items: z.array(itemSchema),
   channelName: z.string(),
-  effectiveChannelUrl: z.string(),
+  destinationId: z.number().int().positive(),
   subscriptionUrl: z.string(),
   db: z.custom<WachiDb>(),
   dryRun: z.boolean(),
+  baseline: z.boolean().default(false),
   isJson: z.boolean(),
   isVerbose: z.boolean(),
   stats: z.custom<CheckStats>(),
-  enqueueForChannel: enqueueForChannelSchema,
   sourceIdentity: z.custom<SourceIdentity>().optional(),
   linkTransforms: z.custom<LinkTransform[]>(),
 });
@@ -71,94 +70,91 @@ const shouldArchiveNotificationLink = (originalLink: string): boolean => {
 };
 
 const resolveArchiveLink = (originalLink: string, notificationLink: string): string => {
-  if (shouldArchiveNotificationLink(originalLink)) {
-    return notificationLink;
-  }
-
-  return originalLink;
+  return shouldArchiveNotificationLink(originalLink) ? notificationLink : originalLink;
 };
 
-const pushSent = (stats: CheckStats, item: Item, channelName: string): void => {
-  stats.sent.push({
-    title: item.title,
-    link: item.link,
-    channel_name: channelName,
-  });
+const pushDryRun = (stats: CheckStats, item: Item, channelName: string): void => {
+  stats.sent.push({ title: item.title, link: item.link, channel_name: channelName });
 };
 
 export const handleSubscriptionItems = async ({
   items,
   channelName,
-  effectiveChannelUrl,
+  destinationId,
   subscriptionUrl,
   db,
   dryRun,
+  baseline,
   isJson,
   isVerbose,
   stats,
-  enqueueForChannel,
   sourceIdentity,
   linkTransforms,
-}: HandleItemsOptions): Promise<void> => {
-  for (const [index, item] of items.entries()) {
-    const dedupHash = buildDedupHash(channelName, item.title, item.link);
+}: HandleItemsOptions): Promise<number> => {
+  const encountered = new Set<string>();
+  let accepted = 0;
+
+  for (const item of items) {
+    const canonicalLink = canonicalizeItemUrl(item.link);
+    if (!canonicalLink) {
+      stats.errors.push(`${subscriptionUrl}: invalid item link: ${item.link}`);
+      continue;
+    }
+
+    const linkKey = buildLinkKey(canonicalLink);
+    const key = linkKey.toString("hex");
+    if (encountered.has(key)) {
+      stats.skipped += 1;
+      continue;
+    }
+    encountered.add(key);
 
     if (dryRun) {
-      if (hasDedupHash(db, dedupHash)) {
+      if (hasDeliveryKey(db, destinationId, linkKey)) {
         stats.skipped += 1;
         continue;
       }
-      pushSent(stats, item, channelName);
+      pushDryRun(stats, item, channelName);
+      accepted += 1;
       if (!isJson) {
         printStdout(`[dry-run] would send: ${item.title} -> ${channelName}`);
       }
       continue;
     }
 
-    const inserted = insertDedupRecord(db, {
-      channelUrl: channelName,
-      subscriptionUrl,
-      title: item.title,
-      link: item.link,
-    });
-
-    if (!inserted) {
-      stats.skipped += 1;
-      if (isVerbose) {
-        printStderr(`[verbose] skip: ${item.title} (already sent)`);
+    if (baseline) {
+      if (admitDeliveryKey(db, destinationId, linkKey)) {
+        accepted += 1;
       }
+      stats.skipped += 1;
       continue;
     }
 
-    const notificationLink = transformLink(item.link, linkTransforms);
-    const body = formatNotificationBody(notificationLink, item.title);
-    const itemSourceIdentity = withLinkFallbackAvatar(sourceIdentity, item.link);
+    const notificationLink = transformLink(canonicalLink, linkTransforms);
+    const itemSourceIdentity = withLinkFallbackAvatar(sourceIdentity, canonicalLink);
+    const admitted = admitDeliveryWithOutbox(db, {
+      destinationId,
+      linkKey,
+      payload: formatNotificationBody(notificationLink, item.title),
+      source: serializeDeliverySource({
+        channelName,
+        subscriptionUrl,
+        title: item.title,
+        archiveLink: resolveArchiveLink(canonicalLink, notificationLink),
+        sourceIdentity: itemSourceIdentity,
+      }),
+      link: canonicalLink,
+    });
 
-    try {
-      await enqueueForChannel(effectiveChannelUrl, async () => {
-        await sendNotification({
-          appriseUrl: effectiveChannelUrl,
-          body,
-          sourceIdentity: itemSourceIdentity,
-        });
-      });
-      pushSent(stats, item, channelName);
-      submitArchive(resolveArchiveLink(item.link, notificationLink), { isVerbose });
-      if (!isJson) {
-        printStdout(`sent: ${item.title} -> ${channelName}`);
+    if (!admitted) {
+      stats.skipped += 1;
+      if (isVerbose) {
+        printStderr(`[verbose] skip: ${item.title} (link already accepted for destination)`);
       }
-    } catch (error) {
-      deleteDedupRecord(db, dedupHash);
-      const reason = error instanceof Error ? error.message : "notification delivery failed";
-      stats.errors.push(`${subscriptionUrl}: ${reason}`);
-
-      const remaining = items.length - index - 1;
-      if (remaining > 0 && isVerbose) {
-        printStderr(
-          `[verbose] aborting ${remaining} pending notifications for ${channelName} after delivery failure`,
-        );
-      }
-      break;
+    } else {
+      accepted += 1;
     }
   }
+
+  return accepted;
 };

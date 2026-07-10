@@ -15,6 +15,13 @@
       "when": 1771300835234,
       "tag": "0001_add-indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1783698860456,
+      "tag": "0002_public_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

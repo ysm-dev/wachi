@@ -6,6 +6,23 @@ import { personalizeAppriseUrl, sourceIdentitySchema } from "./source-identity.t
 
 const DEFAULT_NOTIFICATION_TIMEOUT_MS = 8_000;
 
+/**
+ * Whether a failed send definitively did NOT reach the provider ("undelivered",
+ * safe to retry) or whether the outcome is ambiguous ("unknown", the provider
+ * may already have accepted it, so retrying risks a duplicate).
+ */
+export type DeliveryFailureOutcome = "undelivered" | "unknown";
+
+export class NotificationDeliveryError extends WachiError {
+  readonly outcome: DeliveryFailureOutcome;
+
+  constructor(outcome: DeliveryFailureOutcome, what: string, why: string, fix: string) {
+    super(what, why, fix);
+    this.name = "NotificationDeliveryError";
+    this.outcome = outcome;
+  }
+}
+
 let notificationRuntimeReady: Promise<void> | null = null;
 
 const ensureNotificationRuntime = async (): Promise<void> => {
@@ -28,6 +45,7 @@ const sendNotificationOptionsSchema = z.object({
   body: z.string(),
   timeoutMs: z.number().optional(),
   sourceIdentity: sourceIdentitySchema.optional(),
+  onDispatchStart: z.custom<() => void | Promise<void>>().optional(),
 });
 
 type SendNotificationOptions = z.infer<typeof sendNotificationOptionsSchema>;
@@ -37,10 +55,12 @@ export const sendNotification = async ({
   body,
   timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS,
   sourceIdentity,
+  onDispatchStart,
 }: SendNotificationOptions): Promise<void> => {
   await ensureNotificationRuntime();
 
   const effectiveAppriseUrl = personalizeAppriseUrl(appriseUrl, sourceIdentity);
+  await onDispatchStart?.();
 
   const proc = Bun.spawn(["uvx", "apprise", "-b", body, effectiveAppriseUrl], {
     stdout: "pipe",
@@ -51,7 +71,10 @@ export const sendNotification = async ({
     const timer = setTimeout(() => {
       proc.kill();
       reject(
-        new WachiError(
+        // The subprocess was killed mid-flight: apprise may already have posted
+        // the webhook before we killed it, so the outcome is ambiguous.
+        new NotificationDeliveryError(
+          "unknown",
           `Failed to send notification to ${maskAppriseUrl(appriseUrl)}`,
           `apprise timed out after ${Math.ceil(timeoutMs / 1_000)} seconds.`,
           "Check network connectivity and apprise service health, then try again.",
@@ -66,7 +89,10 @@ export const sendNotification = async ({
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();
-    throw new WachiError(
+    throw new NotificationDeliveryError(
+      // A non-zero exit means apprise ran to completion and reported failure,
+      // so the message was definitively not delivered and is safe to retry.
+      "undelivered",
       `Failed to send notification to ${maskAppriseUrl(appriseUrl)}`,
       stderr.trim() || "uvx apprise exited with an error.",
       "Verify the channel with `wachi test -n <name>`.",

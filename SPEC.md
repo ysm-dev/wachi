@@ -42,43 +42,31 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 
 ```
 1. Auto-update check (24h cooldown, non-blocking)          -- always runs (global)
-2. Cleanup old dedup records (TTL 90 days + cap 50k)       -- always runs (global)
-3. For each subscription (concurrent via p-limit, rate-limited per domain):
+2. For each subscription (concurrent via p-limit, rate-limited per domain):
    (if --name is set, only subscriptions for that channel are checked)
      |
      Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Extract items
      |
      For each item:
-       Resolve relative URLs against subscription URL
-       Compute dedup key: sha256(link + title + channel_name)
-       INSERT OR IGNORE into sent_items
-       If inserted (new) --> Format notification --> Send via apprise (uvx)
+       Resolve relative URLs against RSS URL and conservatively canonicalize
+       Compute a versioned binary SHA-256 link key
+       Atomically insert (physical destination, link key) + outbox payload
        If ignored (duplicate) --> Skip
+3. Drain durable outbox rows sequentially per physical destination
 4. Print summary: "3 new, 47 unchanged, 0 errors"
 ```
 
 ### Dedup Model
 
-Instead of tracking "seen/unseen" state, wachi uses a simple dedup table. Each item is identified by `sha256(link + title + channel_name)`. If the hash already exists in the database, the item was already sent. If not, it's new -- send it and record the hash.
+The permanent uniqueness constraint is `(physical destination, SHA-256(canonical original link))`. Titles, channel names, subscription URLs, publication dates, and transformed notification links are metadata, not identity. Duplicate feed records, title changes, channel renames, and overlapping subscriptions cannot admit a second delivery to the same destination.
 
-On first subscribe (`wachi sub`), all current items are pre-seeded into the dedup table (baseline, no cap) so the channel is not flooded. Use `--send-existing` / `-e` flag to skip baseline and send all current items on next check.
+On first subscribe, older current items are inserted as permanent baseline keys and the latest item is admitted through the normal outbox. Use `--send-existing` / `-e` to admit all current items on the next check instead.
 
-**Same URL, multiple channels:** Allowed. Each channel has its own dedup space (hash includes `channel_name`). The same item gets sent to both channels independently.
+**Same URL, multiple destinations:** Allowed once per distinct physical destination. Multiple logical channels targeting the same destination share delivery history.
 
-### Dedup Cleanup
+### Delivery-Key Retention
 
-At the start of every `wachi check`, old dedup records are pruned:
-
-- **TTL**: Delete records older than 90 days
-- **Count cap**: If more than 50,000 total records remain, delete oldest until 50,000
-
-Both thresholds are configurable via config file:
-
-```yaml
-cleanup:
-  ttl_days: 90      # default: 90
-  max_records: 50000 # default: 50000
-```
+Delivery keys are compact and permanent. They are never removed by age or count, because deleting a key would make an archived feed item new again. Successful outbox payloads are deleted immediately. Legacy `cleanup` settings remain parseable for config compatibility but do not affect permanent keys.
 
 ## Tech Stack
 
@@ -301,7 +289,7 @@ Located at `~/.config/wachi/config.yml` (XDG standard, all platforms). On first 
 
 Config file is created with `0600` permissions (owner read/write only) to protect apprise URLs containing tokens/secrets.
 
-**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new named channel and subscription. No commented-out template sections (no `cleanup` stubs). The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
+**First-run behavior:** When `wachi sub` is called and no config file exists, wachi auto-creates the config file (and parent directories) with the bare minimum content: just the `channels` array containing the new named channel and subscription. The config path is printed to stderr: `Created config: ~/.config/wachi/config.yml`
 
 **Config writes use atomic write:** Write to `<config path>.tmp`, then `rename()` to the target config path. No lockfile needed. If two concurrent writes race, last one wins (acceptable for CLI).
 
@@ -310,11 +298,6 @@ Config file is created with `0600` permissions (owner read/write only) to protec
 All subscriptions are RSS-based. Each subscription has a `url` (the original URL) and an `rss_url` (the discovered feed URL).
 
 ```yaml
-# Dedup cleanup settings
-cleanup:
-  ttl_days: 90
-  max_records: 50000
-
 # Link transforms: replace hostnames in notification links (e.g., for better embeds)
 link_transforms:
   - from: "x.com"
@@ -348,7 +331,6 @@ Config is validated with zod on every read. Errors use `zod-validation-error` fo
 | Field | Required | Default |
 |-------|----------|---------|
 | `channels` | No | `[]` |
-| `cleanup` | No | `{ ttl_days: 90, max_records: 50000 }` |
 | `link_transforms` | No | `[]` |
 
 ### Link Transforms
@@ -357,7 +339,7 @@ Config is validated with zod on every read. Errors use `zod-validation-error` fo
 
 Each entry has a `from` (source hostname) and `to` (replacement hostname). Only the hostname is replaced; path, query, and fragment are preserved. The `www.` prefix is stripped for matching (both `x.com` and `www.x.com` match `from: "x.com"`).
 
-Transforms apply only to notification body links. Dedup hashes always use the original link to avoid re-sending items when transforms change.
+Transforms apply only to notification body links. Permanent link keys always use the canonical original link, so changing transforms cannot resend an item.
 
 ### SQLite Database
 
@@ -365,50 +347,17 @@ Located at `~/.local/share/wachi/wachi.db` (XDG data dir). On first run, existin
 
 Uses **WAL mode** for safe concurrent reads (cron check running while user runs sub).
 
-**Schema creation:** Tables are created with `CREATE TABLE IF NOT EXISTS` on every `connectDb()` call. No migration files, no drizzle-kit at runtime. For future column additions, use `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
+**Schema migration:** Embedded drizzle migrations are tracked in `schema_migrations` and applied once inside an immediate transaction.
 
-**Corruption recovery:** If the database fails to open or query, wachi deletes the file, recreates it fresh, and warns to stderr: `Warning: Database was corrupted and has been reset. Dedup history lost -- some items may be re-sent on next check.`
+**Fail-closed recovery:** Initialization and migration errors never delete the database. Wachi stops with an actionable error so permanent delivery history cannot be silently lost.
 
 Schema managed by **drizzle-orm**. Types generated by **drizzle-zod** (no manual type declarations).
 
-```typescript
-// src/lib/db/schema.ts
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core"
-
-/** Dedup table: tracks all items ever sent to prevent duplicate notifications */
-export const sentItems = sqliteTable("sent_items", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  dedupHash: text("dedup_hash").notNull().unique(),  // sha256(link + title + channel_name)
-  channelUrl: text("channel_url").notNull(),         // stores channel name
-  subscriptionUrl: text("subscription_url").notNull(),
-  title: text("title"),
-  link: text("link"),
-  sentAt: text("sent_at").notNull(),  // ISO 8601
-})
-
-/** Tracks consecutive failures per subscription */
-export const health = sqliteTable(
-  "health",
-  {
-    channelUrl: text("channel_url").notNull(),
-    subscriptionUrl: text("subscription_url").notNull(),
-    consecutiveFailures: integer("consecutive_failures").default(0),
-    lastError: text("last_error"),
-    lastFailureAt: text("last_failure_at"),
-  },
-  (table) => [primaryKey({ columns: [table.channelUrl, table.subscriptionUrl] })],
-)
-
-/** Key-value store for metadata (auto-update cooldown, ETag cache, etc.) */
-export const meta = sqliteTable("meta", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull(),
-})
-```
+The core tables are `destinations`, permanent `delivery_keys`, transient `delivery_outbox`, `health`, `meta`, and `schema_migrations`. `delivery_keys` and `delivery_outbox` use composite primary keys with `WITHOUT ROWID`; link and destination identities are 32-byte BLOBs.
 
 ### Concurrent Check Safety
 
-When two `wachi check` processes run simultaneously (two cron jobs, or user runs check while cron is running), SQLite dedup handles it naturally. Both processes try `INSERT OR IGNORE` for the same items. One succeeds (insert), the other is ignored (duplicate). Both might send the same notification in a rare race, but it's self-resolving. No process-level locking needed.
+When checks overlap, the composite delivery-key primary key admits one process. Outbox state transitions use immediate transactions, leases, and a partial unique index that permits only one active dispatch per destination across processes.
 
 ## URL Handling
 
@@ -420,7 +369,7 @@ When two `wachi check` processes run simultaneously (two cron jobs, or user runs
 
 ### Relative URL Resolution
 
-RSS items may contain relative URLs (`/post/123`). These are resolved against the subscription URL using `new URL(relativeLink, subscriptionUrl)`. All URLs in notifications are absolute.
+RSS items may contain relative URLs (`/post/123`). These are resolved against the RSS URL. Only valid HTTP(S) item links or URL-like GUIDs are admitted; opaque or missing GUIDs do not fall back to the subscription URL.
 
 ### Redirect Handling
 
@@ -448,14 +397,14 @@ When a user runs `wachi sub -n <name> [-a <apprise-url>] <url>`:
 
 RSS items may lack `link` or `title`. Use fallback chains:
 
-- **link:** `item.link ?? item.guid ?? subscriptionUrl`
+- **link:** valid HTTP(S) `item.link`, or a URL-like GUID; otherwise reject the item
 - **title:** `item.title ?? item.description?.slice(0, 100) ?? "Untitled"`
 
-Always produce a valid dedup hash from whatever fields are available.
+Never synthesize a duplicate link by falling back to the subscription URL.
 
 ### RSS Conditional Requests (ETag / If-Modified-Since)
 
-Store `ETag` and `Last-Modified` response headers per RSS subscription in the SQLite meta table with composite keys (e.g., key `etag:https://blog.example.com/feed.xml`).
+Store `ETag` and `Last-Modified` per physical destination and RSS URL. Validators are persisted only after all parsed items are durably admitted.
 
 On subsequent fetches, send `If-None-Match` and `If-Modified-Since` headers. If the server returns `304 Not Modified`, skip parsing entirely. Saves bandwidth for frequent checks.
 
@@ -464,21 +413,21 @@ On subsequent fetches, send `If-None-Match` and `If-Modified-Since` headers. If 
 - Fetch the RSS feed via ofetch (with ETag/If-Modified-Since)
 - If 304 Not Modified: skip (no changes)
 - Parse with rss-parser
-- For each item in reverse feed order (oldest item in that feed first): resolve relative URLs, compute dedup hash, INSERT OR IGNORE into sentItems
-- If inserted -> new item -> send notification
+- For each item in reverse feed order: canonicalize the link and atomically admit a permanent key plus outbox payload
+- After all feed admissions commit, drain durable outbox rows
 
 ### 3. Baseline Behavior
 
 When `wachi sub` is called (default, no `--send-existing`):
 1. Immediately fetch the current RSS items
-2. Insert ALL items into the dedup table with current timestamp (no cap)
-3. No notifications sent
-4. Next `wachi check` will only send genuinely new items
+2. Insert older items as permanent baseline keys
+3. Admit and send the latest link through the normal outbox, if that destination has not seen it
+4. Next `wachi check` will only admit genuinely new links
 
 When `wachi sub --send-existing` / `-e` is called:
 1. Add subscription to config
-2. Do NOT pre-seed dedup table
-3. Next `wachi check` will send ALL current items as notifications (they're all "new" to the dedup table)
+2. Mark the subscription cutover without inserting baseline keys
+3. Next `wachi check` will admit and send all current links through the outbox
 
 ### 4. URL Reachability Validation
 
@@ -504,7 +453,7 @@ uvx apprise -b "<body>" "<apprise-url>"
 
 No `-t` (title) flag is used. The entire notification is sent as the body. Some apprise services ignore `-t` anyway.
 
-**Timeout:** 30 seconds per apprise invocation. If the subprocess doesn't complete in 30s, kill it and log the failure (don't record in dedup, retry on next check).
+**Timeout:** 8 seconds per apprise invocation. The permanent key is retained regardless of outcome.
 
 **1 item = 1 message.** Each new item is sent as a separate notification.
 
@@ -529,18 +478,14 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 
 ### Notification Concurrency
 
-- Notifications to the **same channel** are sent **sequentially** (preserves per-feed FIFO, avoids service rate limits)
-- Notifications to **different channels** are sent **in parallel**
+- Notifications to the **same physical destination** are sent **sequentially**
+- Notifications to **different destinations** are sent **in parallel**
 - Within a single RSS/Atom feed, items are sent **oldest first** by reversing the feed's source order (feeds usually publish newest first)
 - Ordering across different feeds in the same channel is **not guaranteed**
 
 ### Partial Notification Failure
 
-If apprise fails for item #3 out of 10, wachi:
-1. Logs the failure
-2. Does NOT record item #3 in dedup (will retry on next check)
-3. Continues sending items #4-#10
-4. Reports partial failure in the summary line and exits with code 2
+If delivery fails before dispatch starts, the outbox row returns to pending with backoff. Once dispatch starts, any timeout, crash, or nonzero result is ambiguous and becomes `uncertain`; it is not retried automatically because the provider may already have accepted it. The permanent delivery key is never removed.
 
 ### `wachi test` Command
 
@@ -672,10 +617,12 @@ The `consecutive_failures` counter resets to 0 on **any successful check** (RSS 
 
 ### State Update Rules
 
-- Item sent successfully: recorded in dedup table (never sent again)
-- Notification fails: item is NOT recorded in dedup table (retried on next check)
+- Item accepted: permanent delivery key and outbox row are committed before network work
+- Confirmed delivery: delete only the outbox payload; retain the permanent key
+- Pre-dispatch failure: retain pending outbox work with backoff
+- Ambiguous post-dispatch failure: retain an uncertain row and never retry automatically
 - Check succeeds: reset `consecutive_failures` to 0
-- Check fails (HTTP error, timeout, parse error): increment failure counter, no dedup changes
+- Check fails (HTTP error, timeout, parse error): increment failure counter, no delivery-key changes
 
 ## Security
 
@@ -799,10 +746,10 @@ wachi/
         write.ts                # Write config with atomic write (temp+rename) + 0600
         schema.ts               # Zod schemas for config (drizzle-zod for DB types)
       db/
-        connect.ts              # drizzle-orm setup (bun:sqlite, WAL mode, CREATE TABLE IF NOT EXISTS)
+        connect.ts              # drizzle-orm setup, tracked migrations, WAL, fail-closed startup
         schema.ts               # drizzle table definitions
-        dedup.ts                # Dedup insert/check operations
-        cleanup.ts              # Periodic cleanup (TTL + count cap)
+        delivery-ledger.ts      # Permanent destination/link keys
+        delivery-outbox.ts      # Durable delivery leases and state transitions
         health.ts               # Health tracking operations
         meta.ts                 # Meta key-value operations (auto-update, ETag cache)
       rss/
@@ -810,7 +757,8 @@ wachi/
         discover.ts             # Auto-discover RSS from HTML (link tags + common paths)
         parse.ts                # Parse RSS/Atom feed (rss-parser) with field fallbacks
       notify/
-        send.ts                 # Send notification via apprise (uvx), 30s timeout
+        send.ts                 # Send notification via apprise (uvx), 8s timeout
+        destination-identity.ts # Physical destination identity keys
         format.ts               # Format notification message (body only, no -t flag)
         install-uv.ts           # Auto-install uv silently
       http/
@@ -847,8 +795,8 @@ wachi/
         config/read.test.ts
         config/write.test.ts
         config/schema.test.ts
-        db/dedup.test.ts
-        db/cleanup.test.ts
+        db/delivery-ledger.test.ts
+        db/delivery-outbox.test.ts
         db/health.test.ts
         db/meta.test.ts
         rss/detect.test.ts
@@ -875,9 +823,8 @@ wachi/
       check-rss.test.ts         # Check RSS subscription end-to-end
       check-dry-run.test.ts     # Dry-run mode end-to-end
       unsub.test.ts             # Unsubscribe end-to-end
-      dedup.test.ts             # Dedup behavior across multiple checks
+      handle-items.test.ts      # Permanent link behavior across subscriptions
       baseline.test.ts          # Baseline vs --send-existing behavior
-      cleanup.test.ts           # Dedup cleanup TTL + cap
     e2e/
       cli.test.ts               # Full CLI invocation tests (spawn process)
       config-validation.test.ts # Config error messages
@@ -1000,14 +947,14 @@ crontab -e
 2. Utils layer (XDG paths, env vars, SHA-256 hashing, WachiError)
 3. URL utils (normalize, resolve, validate)
 4. Config layer (zod schemas, YAML/JSON round-trip read/write, 0600 permissions, atomic write, validation)
-5. Database layer (drizzle schema, drizzle-zod types, bun:sqlite WAL, CREATE TABLE IF NOT EXISTS, corruption recovery, dedup + cleanup operations)
+5. Database layer (tracked drizzle migrations, permanent link ledger, durable outbox, WAL, fail-closed recovery)
 6. HTTP client (ofetch instance, per-domain rate limiting with timestamp map + sleep)
 7. RSS detection + discovery + parsing (with field fallbacks + ETag/If-Modified-Since)
 8. CLI scaffolding with citty (all commands wired up, all flags with shorthands, --help on all, version baked in)
 9. `wachi sub` command (RSS path + baseline seeding + reachability validation + idempotent check)
 10. `wachi ls` command (indented tree format with health indicators)
-11. `wachi check` command (RSS path + dedup + p-limit concurrency + rate limiting + cleanup + dry-run)
-12. Apprise notification (uvx, silent uv auto-install, body-only format, 30s timeout, sequential per channel)
+11. `wachi check` command (RSS admission + p-limit concurrency + rate limiting + durable outbox + dry-run)
+12. Apprise notification (uvx, silent uv auto-install, body-only format, 8s timeout, sequential per destination)
 13. `wachi test` command (fixed test message)
 14. `wachi unsub` command (no confirmation, print what was removed)
 15. Health tracking (consecutive failure counting + notifications)

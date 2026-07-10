@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
 import { getMetaValue } from "../../src/lib/db/get-meta-value.ts";
-import { fetchRssSubscriptionItems } from "../../src/lib/subscriptions/fetch-rss-subscription-items.ts";
+import {
+  fetchRssSubscriptionItems,
+  persistRssValidators,
+} from "../../src/lib/subscriptions/fetch-rss-subscription-items.ts";
 import { googleS2FaviconUrl } from "../../src/lib/subscriptions/source-branding.ts";
 import { WachiError } from "../../src/utils/error.ts";
 
@@ -68,7 +71,7 @@ const feedWithInvalidImageXml = `<?xml version="1.0" encoding="UTF-8"?>
 </rss>`;
 
 describe("fetchRssSubscriptionItems integration", () => {
-  it("stores ETag and returns notModified on conditional 304", async () => {
+  it("returns ETag without storing it and uses it after explicit persistence", async () => {
     const etag = '"abc-123"';
     const server = Bun.serve({
       port: 0,
@@ -107,11 +110,13 @@ describe("fetchRssSubscriptionItems integration", () => {
 
     const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
     const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+    const validatorScope = "destination:1";
     const first = await fetchRssSubscriptionItems({
       subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
+      validatorScope,
     });
 
     expect(first.notModified).toBe(false);
@@ -119,20 +124,28 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(first.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/one`);
     expect(first.sourceIdentity?.username).toBe("Feed");
     expect(first.sourceIdentity?.avatarUrl).toBe(googleS2FaviconUrl(subscriptionUrl) ?? undefined);
-    expect(getMetaValue(db, `etag:${rssUrl}`)).toBe(etag);
+    expect(first.validators).toEqual({ etag, lastModified: null });
+    expect(getMetaValue(db, `etag:${validatorScope}:${rssUrl}`)).toBeNull();
+    expect(getMetaValue(db, `etag:${rssUrl}`)).toBeNull();
+
+    // Durable item handling completes before the caller commits the returned validators.
+    persistRssValidators(db, rssUrl, first.validators, validatorScope);
+    expect(getMetaValue(db, `etag:${validatorScope}:${rssUrl}`)).toBe(etag);
 
     const second = await fetchRssSubscriptionItems({
       subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
+      validatorScope,
     });
 
     expect(second.notModified).toBe(true);
     expect(second.items).toEqual([]);
+    expect(second.validators).toEqual({ etag, lastModified: null });
   });
 
-  it("stores Last-Modified and sends If-Modified-Since", async () => {
+  it("returns Last-Modified without storing it and sends it after explicit persistence", async () => {
     const lastModified = "Mon, 01 Jan 2024 00:00:00 GMT";
     const server = Bun.serve({
       port: 0,
@@ -171,23 +184,145 @@ describe("fetchRssSubscriptionItems integration", () => {
 
     const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
     const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
-    await fetchRssSubscriptionItems({
+    const validatorScope = "destination:2";
+    const first = await fetchRssSubscriptionItems({
       subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
+      validatorScope,
     });
 
-    expect(getMetaValue(db, `last-modified:${rssUrl}`)).toBe(lastModified);
+    expect(first.validators).toEqual({ etag: null, lastModified });
+    expect(getMetaValue(db, `last-modified:${validatorScope}:${rssUrl}`)).toBeNull();
+    expect(getMetaValue(db, `last-modified:${rssUrl}`)).toBeNull();
+
+    persistRssValidators(db, rssUrl, first.validators, validatorScope);
+    expect(getMetaValue(db, `last-modified:${validatorScope}:${rssUrl}`)).toBe(lastModified);
 
     const second = await fetchRssSubscriptionItems({
       subscriptionUrl,
       rssUrl,
       db,
       useConditionalRequest: true,
+      validatorScope,
     });
 
     expect(second.notModified).toBe(true);
+  });
+
+  it("keeps validator scopes independent", async () => {
+    const scopeAEtag = '"scope-a"';
+    const scopeBEtag = '"scope-b"';
+    const conditionalHeaders: Array<string | null> = [];
+    let fullResponses = 0;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname !== "/feed.xml") {
+          return new Response("not found", { status: 404 });
+        }
+
+        const ifNoneMatch = request.headers.get("if-none-match");
+        conditionalHeaders.push(ifNoneMatch);
+        if (ifNoneMatch === scopeAEtag || ifNoneMatch === scopeBEtag) {
+          return new Response(null, { status: 304, headers: { etag: ifNoneMatch } });
+        }
+
+        const etag = fullResponses === 0 ? scopeAEtag : scopeBEtag;
+        fullResponses += 1;
+        return new Response(feedXml, {
+          headers: { "content-type": "application/rss+xml", etag },
+        });
+      },
+    });
+    servers.push(server);
+
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    const subscriptionUrl = `http://127.0.0.1:${server.port}/site`;
+    const scopeA = "destination:10";
+    const scopeB = "destination:20";
+
+    const firstA = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+      validatorScope: scopeA,
+    });
+    persistRssValidators(db, rssUrl, firstA.validators, scopeA);
+
+    const firstB = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+      validatorScope: scopeB,
+    });
+    persistRssValidators(db, rssUrl, firstB.validators, scopeB);
+
+    const secondA = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+      validatorScope: scopeA,
+    });
+    const secondB = await fetchRssSubscriptionItems({
+      subscriptionUrl,
+      rssUrl,
+      db,
+      useConditionalRequest: true,
+      validatorScope: scopeB,
+    });
+
+    expect(firstA.validators.etag).toBe(scopeAEtag);
+    expect(firstB.validators.etag).toBe(scopeBEtag);
+    expect(secondA.notModified).toBe(true);
+    expect(secondB.notModified).toBe(true);
+    expect(conditionalHeaders).toEqual([null, null, scopeAEtag, scopeBEtag]);
+    expect(getMetaValue(db, `etag:${scopeA}:${rssUrl}`)).toBe(scopeAEtag);
+    expect(getMetaValue(db, `etag:${scopeB}:${rssUrl}`)).toBe(scopeBEtag);
+  });
+
+  it("resolves relative item links against the RSS URL", async () => {
+    const relativeLinkFeedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Relative Link Feed</title>
+    <item>
+      <title>One</title>
+      <link>items/one</link>
+    </item>
+  </channel>
+</rss>`;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/feeds/current.xml") {
+          return new Response(relativeLinkFeedXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const rssUrl = `http://127.0.0.1:${server.port}/feeds/current.xml`;
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl: `http://127.0.0.1:${server.port}/site/articles/index.html`,
+      rssUrl,
+    });
+
+    expect(result.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/feeds/items/one`);
   });
 
   it("throws WachiError when RSS endpoint returns >= 400", async () => {
