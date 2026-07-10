@@ -22,8 +22,28 @@ mock.module(pathsModulePath, () => ({
   getLegacyMacOsDbPath: () => legacyMacOsDbPath,
 }));
 
+// Return a COMPLETE env object (reading process.env, overriding only dbPath).
+// Bun applies `mock.module` process-globally and does not reliably restore it
+// between test files, so an incomplete stub would leak a broken getEnv into
+// other suites (archive/update tests). A full pass-through keeps any leak inert.
+const readMockEnv = (name: string): string | undefined => {
+  const value = process.env[name];
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
 mock.module(envModulePath, () => ({
-  getEnv: () => ({ dbPath: envDbPath }),
+  getEnv: () => ({
+    appriseUrlOverride: readMockEnv("WACHI_APPRISE_URL"),
+    archiveAccessKey: readMockEnv("WACHI_ARCHIVE_ACCESS_KEY"),
+    archiveSecretKey: readMockEnv("WACHI_ARCHIVE_SECRET_KEY"),
+    configPath: readMockEnv("WACHI_CONFIG_PATH"),
+    dbPath: envDbPath,
+    noArchive: readMockEnv("WACHI_NO_ARCHIVE") === "1",
+    pathsRoot: readMockEnv("WACHI_PATHS_ROOT"),
+    wrapperPath: readMockEnv("WACHI_WRAPPER_PATH"),
+    noAutoUpdate: readMockEnv("WACHI_NO_AUTO_UPDATE") === "1",
+  }),
 }));
 
 const { connectDb } = await import("../../../../src/lib/db/connect.ts");
