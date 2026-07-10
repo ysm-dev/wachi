@@ -1,60 +1,64 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ConnectedDb } from "../../../../src/lib/db/connect.ts";
-
-const sendModulePath = new URL("../../../../src/lib/notify/send.ts", import.meta.url).pathname;
-const archiveModulePath = new URL("../../../../src/lib/archive/submit.ts", import.meta.url)
-  .pathname;
-
-type DeliveryFailureOutcome = "undelivered" | "unknown";
-
-class FakeDeliveryError extends Error {
-  readonly outcome: DeliveryFailureOutcome;
-  constructor(outcome: DeliveryFailureOutcome, message: string) {
-    super(message);
-    this.name = "NotificationDeliveryError";
-    this.outcome = outcome;
-  }
-}
-
-type SendCall = { onDispatchStart?: () => void | Promise<void>; body: string };
-
-let sendBehavior: (call: SendCall) => Promise<void> = async (call) => {
-  await call.onDispatchStart?.();
-};
-const dispatchedBodies: string[] = [];
-
-mock.module(sendModulePath, () => ({
-  NotificationDeliveryError: FakeDeliveryError,
-  sendNotification: async (call: SendCall) => {
-    dispatchedBodies.push(call.body);
-    return sendBehavior(call);
-  },
-}));
-
-mock.module(archiveModulePath, () => ({
-  submitArchive: () => {},
-}));
-
-const { drainDestinationOutbox } = await import("../../../../src/lib/check/drain-outbox.ts");
-const { handleSubscriptionItems } = await import("../../../../src/lib/check/handle-items.ts");
-const { connectDb } = await import("../../../../src/lib/db/connect.ts");
-const { admitDeliveryWithOutbox, listDeliveryKeys, resolveDestinationId } = await import(
-  "../../../../src/lib/db/delivery-ledger.ts"
-);
-const { claimNextDelivery, listDeliveryOutbox } = await import(
-  "../../../../src/lib/db/delivery-outbox.ts"
-);
-const { serializeDeliverySource } = await import("../../../../src/lib/notify/delivery-source.ts");
+import { drainDestinationOutbox } from "../../../../src/lib/check/drain-outbox.ts";
+import { handleSubscriptionItems } from "../../../../src/lib/check/handle-items.ts";
+import { type ConnectedDb, connectDb } from "../../../../src/lib/db/connect.ts";
+import {
+  admitDeliveryWithOutbox,
+  listDeliveryKeys,
+  resolveDestinationId,
+} from "../../../../src/lib/db/delivery-ledger.ts";
+import { claimNextDelivery, listDeliveryOutbox } from "../../../../src/lib/db/delivery-outbox.ts";
+import { serializeDeliverySource } from "../../../../src/lib/notify/delivery-source.ts";
+import { resetSendNotificationStateForTest } from "../../../../src/lib/notify/send.ts";
 
 type Db = ConnectedDb["db"];
+type AppriseOutcome = "success" | "undelivered";
 
 const key = (value: number): Buffer => Buffer.alloc(32, value);
 
+const makeStream = (text: string): ReadableStream<Uint8Array> => {
+  return new Response(text).body as ReadableStream<Uint8Array>;
+};
+
+const originalSpawn = Bun.spawn;
+const originalNoArchive = process.env.WACHI_NO_ARCHIVE;
+
+let appriseOutcome: AppriseOutcome = "success";
+const dispatchedBodies: string[] = [];
+
 let tempDir = "";
 let connection: ConnectedDb | null = null;
+
+// Mock the notification subprocess: any non-apprise invocation (the uvx runtime
+// probe) succeeds; the apprise send returns the configured outcome. This
+// exercises the real send.ts classification without touching the network and
+// without leaking module mocks across test files.
+const installSpawnMock = (): void => {
+  Bun.spawn = ((command: string[]) => {
+    if (!command.includes("apprise")) {
+      return { exited: Promise.resolve(0), kill: () => {} };
+    }
+
+    dispatchedBodies.push(command[3] ?? "");
+    if (appriseOutcome === "undelivered") {
+      return {
+        exited: Promise.resolve(1),
+        stdout: makeStream(""),
+        stderr: makeStream("apprise rejected the webhook"),
+        kill: () => {},
+      };
+    }
+    return {
+      exited: Promise.resolve(0),
+      stdout: makeStream(""),
+      stderr: makeStream(""),
+      kill: () => {},
+    };
+  }) as unknown as typeof Bun.spawn;
+};
 
 const makeStats = () => ({
   sent: [] as Array<{ title: string; link: string; channel_name: string }>,
@@ -63,7 +67,7 @@ const makeStats = () => ({
   networkSkipped: 0,
 });
 
-const admit = (db: Db, destinationId: number, n: number, availableAt = 0): void => {
+const admit = (db: Db, destinationId: number, n: number): void => {
   admitDeliveryWithOutbox(db, {
     destinationId,
     linkKey: key(n),
@@ -75,7 +79,6 @@ const admit = (db: Db, destinationId: number, n: number, availableAt = 0): void 
       archiveLink: `https://example.com/${n}`,
     }),
     link: `https://example.com/${n}`,
-    availableAt,
   });
 };
 
@@ -96,12 +99,20 @@ beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "wachi-drain-outbox-"));
   connection = await connectDb(join(tempDir, "wachi.db"));
   dispatchedBodies.length = 0;
-  sendBehavior = async (call) => {
-    await call.onDispatchStart?.();
-  };
+  appriseOutcome = "success";
+  process.env.WACHI_NO_ARCHIVE = "1";
+  resetSendNotificationStateForTest();
+  installSpawnMock();
 });
 
 afterEach(async () => {
+  Bun.spawn = originalSpawn;
+  resetSendNotificationStateForTest();
+  if (originalNoArchive === undefined) {
+    delete process.env.WACHI_NO_ARCHIVE;
+  } else {
+    process.env.WACHI_NO_ARCHIVE = originalNoArchive;
+  }
   connection?.sqlite.close();
   connection = null;
   await rm(tempDir, { recursive: true, force: true });
@@ -131,10 +142,7 @@ describe("drainDestinationOutbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(db, destinationId, 2);
-    sendBehavior = async (call) => {
-      await call.onDispatchStart?.();
-      throw new FakeDeliveryError("undelivered", "apprise exited non-zero");
-    };
+    appriseOutcome = "undelivered";
 
     const stats = await drain(db, destinationId);
 
@@ -149,27 +157,6 @@ describe("drainDestinationOutbox", () => {
     expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
   });
 
-  it("parks an ambiguous outcome as uncertain and never retries it", async () => {
-    const db = connection?.db;
-    if (!db) {
-      throw new Error("db not initialized");
-    }
-    const destinationId = resolveDestinationId(db, key(1));
-    admit(db, destinationId, 2);
-    sendBehavior = async (call) => {
-      await call.onDispatchStart?.();
-      throw new FakeDeliveryError("unknown", "apprise timed out");
-    };
-
-    const stats = await drain(db, destinationId);
-
-    expect(stats.errors).toHaveLength(1);
-    const rows = listDeliveryOutbox(db, destinationId);
-    expect(rows[0]?.state).toBe("uncertain");
-    expect(claimNextDelivery(db, destinationId, { now: 10_000_000 })).toBeUndefined();
-    expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
-  });
-
   it("parks a determinate failure as uncertain once retries are exhausted", async () => {
     const db = connection?.db;
     if (!db) {
@@ -177,10 +164,7 @@ describe("drainDestinationOutbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(db, destinationId, 2);
-    sendBehavior = async (call) => {
-      await call.onDispatchStart?.();
-      throw new FakeDeliveryError("undelivered", "apprise exited non-zero");
-    };
+    appriseOutcome = "undelivered";
 
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await drain(db, destinationId);

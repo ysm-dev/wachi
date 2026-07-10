@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+  NotificationDeliveryError,
   resetSendNotificationStateForTest,
   sendNotification,
 } from "../../../../src/lib/notify/send.ts";
-import { WachiError } from "../../../../src/utils/error.ts";
 
 type MockProc = {
   exited: Promise<number>;
@@ -71,9 +71,13 @@ describe("sendNotification", () => {
       } as MockProc;
     }) as unknown as typeof Bun.spawn;
 
-    await expect(
-      sendNotification({ appriseUrl: "slack://token/channel", body: "hello" }),
-    ).rejects.toBeInstanceOf(WachiError);
+    const error = await sendNotification({
+      appriseUrl: "slack://token/channel",
+      body: "hello",
+    }).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(NotificationDeliveryError);
+    // A non-zero exit means apprise ran and reported failure: safe to retry.
+    expect((error as NotificationDeliveryError).outcome).toBe("undelivered");
   });
 
   it("throws timeout WachiError and kills process when apprise hangs", async () => {
@@ -98,13 +102,14 @@ describe("sendNotification", () => {
       } as MockProc;
     }) as unknown as typeof Bun.spawn;
 
-    await expect(
-      sendNotification({
-        appriseUrl: "slack://token/channel",
-        body: "hello",
-        timeoutMs: 5,
-      }),
-    ).rejects.toBeInstanceOf(WachiError);
+    const error = await sendNotification({
+      appriseUrl: "slack://token/channel",
+      body: "hello",
+      timeoutMs: 5,
+    }).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(NotificationDeliveryError);
+    // A timeout kills the subprocess mid-flight: the outcome is ambiguous.
+    expect((error as NotificationDeliveryError).outcome).toBe("unknown");
 
     expect(killed).toBe(true);
   });
