@@ -161,7 +161,16 @@ jobs:
 
           MAX_UNPACKED_BYTES = 1 * 1024 * 1024
           with open("pack-dry-run.json", "r", encoding="utf-8") as f:
-              pack = json.load(f)[0]
+              data = json.load(f)
+
+          # npm <= 11 returns a list [ {...} ]; npm >= 12 returns an object
+          # keyed by package name { "wachi": {...} }.
+          if isinstance(data, list) and data:
+              pack = data[0]
+          elif isinstance(data, dict) and data:
+              pack = next(iter(data.values()))
+          else:
+              raise SystemExit(f"Unexpected `npm pack --json` output: {data!r}")
 
           unpacked_size = pack["unpackedSize"]
           if unpacked_size > MAX_UNPACKED_BYTES:
