@@ -3,6 +3,10 @@
   "version": "0.4.2",
   "description": "Subscribe any link and get notified on change",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ysm-dev/wachi.git"
+  },
   "type": "module",
   "workspaces": [
     "packages/*"

@@ -126,6 +126,13 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # npm Trusted Publishing (OIDC) requires npm >= 11.5.1; Node 22 ships an
+      # older npm, so upgrade before publishing.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -176,9 +183,11 @@ jobs:
           print(f"Root package OK: {unpacked_size} bytes, {len(file_paths)} files")
           PY
 
+      # Authentication uses GitHub Actions OIDC (npm Trusted Publishing). No
+      # NPM_TOKEN secret is used; provenance attestations are generated
+      # automatically. Each package must have a trusted publisher configured on
+      # npmjs.com pointing at this repository and workflow.
       - name: Publish platform packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --access public ./packages/darwin-arm64
           npm publish --access public ./packages/darwin-x64
@@ -187,8 +196,6 @@ jobs:
           npm publish --access public ./packages/win32-x64
 
       - name: Publish main package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
 
       - name: Create GitHub release

@@ -1,6 +1,11 @@
 {
   "name": "@wachi-cli/win32-x64",
   "version": "0.4.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ysm-dev/wachi.git",
+    "directory": "packages/win32-x64"
+  },
   "private": false,
   "os": [
     "win32"
