@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { buildDestinationKey } from "../notify/destination-identity.ts";
-import { canonicalizeItemUrl } from "../url/canonicalize-item-url.ts";
+import { canonicalizeFeedUrl } from "../url/canonicalize-item-url.ts";
 import { toChannelNameKey } from "./channel-name-key.ts";
 
 export const cleanupConfigSchema = z.object({
@@ -48,7 +48,7 @@ const channelsSchema = z.array(channelSchema).superRefine((channels, context) =>
     subscriptionsByDestination.set(destinationKey, destinationSubscriptions);
 
     for (const [subscriptionIndex, subscription] of channel.subscriptions.entries()) {
-      const rssUrl = canonicalizeItemUrl(subscription.rss_url) ?? subscription.rss_url;
+      const rssUrl = canonicalizeFeedUrl(subscription.rss_url) ?? subscription.rss_url;
       if (destinationSubscriptions.has(rssUrl)) {
         context.addIssue({
           code: z.ZodIssueCode.custom,

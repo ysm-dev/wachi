@@ -17,7 +17,7 @@ import {
   resolveSourceIdentity,
   withLinkFallbackAvatar,
 } from "../lib/subscriptions/resolve-source-identity.ts";
-import { canonicalizeItemUrl } from "../lib/url/canonicalize-item-url.ts";
+import { canonicalizeFeedUrl } from "../lib/url/canonicalize-item-url.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
 import { validateAppriseUrl, validateReachableUrl } from "../lib/url/validate.ts";
 import { getEnv } from "../utils/env.ts";
@@ -159,9 +159,9 @@ export const subCommand = defineCommand({
       }
 
       const prepared = await prepareSubscription(normalized.url);
-      const preparedRssUrl = canonicalizeItemUrl(prepared.subscription.rss_url);
+      const preparedRssUrl = canonicalizeFeedUrl(prepared.subscription.rss_url);
       const preparedDuplicate = existingChannel?.subscriptions.find((subscription) => {
-        return canonicalizeItemUrl(subscription.rss_url) === preparedRssUrl;
+        return canonicalizeFeedUrl(subscription.rss_url) === preparedRssUrl;
       });
       if (preparedDuplicate) {
         if (isJson) {

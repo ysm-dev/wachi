@@ -60,6 +60,10 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 
 The permanent uniqueness constraint is `(physical destination, SHA-256(canonical original link))`. Titles, channel names, subscription URLs, publication dates, and transformed notification links are metadata, not identity. Duplicate feed records, title changes, channel renames, and overlapping subscriptions cannot admit a second delivery to the same destination.
 
+**Item-link canonicalization is deliberately conservative.** Scheme, `www.` prefix, trailing slash, path case, query order, and query case are all preserved, because normalizing any of them can merge two genuinely different items. The **URL fragment is preserved for item links**: anchor-addressed feeds (per-comment permalinks such as `/topic?id=1#cid2`, hash-routed sites) use the fragment as the only discriminator between items, so discarding it collapses many items onto one permanent key and silently suppresses every item after the first, forever. A bare trailing `#` carries no fragment and is dropped so `…/post#` and `…/post` keep one identity.
+
+Subscription (feed) URLs use a separate canonicalization that *does* strip the fragment, since a fragment is never sent to the server and cannot change which document is fetched.
+
 On first subscribe, older current items are inserted as permanent baseline keys and the latest item is admitted through the normal outbox. Use `--send-existing` / `-e` to admit all current items on the next check instead.
 
 **Same URL, multiple destinations:** Allowed once per distinct physical destination. Multiple logical channels targeting the same destination share delivery history.

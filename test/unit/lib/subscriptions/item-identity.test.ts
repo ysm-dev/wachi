@@ -11,8 +11,8 @@ describe("item link identity", () => {
   });
 
   it("matches canonical-equivalent absolute and relative links", () => {
-    const absolute = buildLinkKey("HTTPS://EXAMPLE.COM:443/posts/./1#first");
-    const relative = buildLinkKey("../1#second", "https://example.com/posts/archive/");
+    const absolute = buildLinkKey("HTTPS://EXAMPLE.COM:443/posts/./1");
+    const relative = buildLinkKey("../1", "https://example.com/posts/archive/");
 
     expect(relative).toEqual(absolute);
   });
@@ -23,6 +23,24 @@ describe("item link identity", () => {
     );
     expect(buildLinkKey("https://example.com/Post?a=1&b=2")).not.toEqual(
       buildLinkKey("https://example.com/Post?b=2&a=1"),
+    );
+  });
+
+  it("keeps items that differ only by fragment distinct", () => {
+    // Anchor-addressed feeds (per-comment permalinks) rely on this to avoid
+    // collapsing many items onto one permanent key.
+    expect(buildLinkKey("https://news.hada.io/topic?id=32611#cid63660")).not.toEqual(
+      buildLinkKey("https://news.hada.io/topic?id=32611#cid63659"),
+    );
+    expect(buildLinkKey("https://news.hada.io/topic?id=32611#cid63660")).not.toEqual(
+      buildLinkKey("https://news.hada.io/topic?id=32611"),
+    );
+  });
+
+  it("keeps fragment-free keys stable so existing delivery history stays valid", () => {
+    // sha256("wachi:link-key:v1\0" + "https://example.com/posts/1")
+    expect(buildLinkKey("https://example.com/posts/1").toString("hex")).toBe(
+      "419226ded15c2eeab2ec54b60757688aae77c13e1e248b45ffbc74aac32c63e9",
     );
   });
 
