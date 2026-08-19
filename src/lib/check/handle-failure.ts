@@ -24,6 +24,9 @@ const handleFailureOptionsSchema = z.object({
 
 type HandleFailureOptions = z.infer<typeof handleFailureOptionsSchema>;
 
+export const toFailureMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : "check failed";
+
 const maybeSendFailureAlert = async (
   failures: number,
   subscription: SubscriptionConfig,
@@ -74,7 +77,7 @@ export const handleSubscriptionFailure = async ({
   enqueueForChannel,
   error,
 }: HandleFailureOptions): Promise<void> => {
-  const message = error instanceof Error ? error.message : "check failed";
+  const message = toFailureMessage(error);
   const health = markHealthFailure(db, channelName, subscription.url, message);
 
   await maybeSendFailureAlert(

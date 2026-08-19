@@ -9,9 +9,11 @@ import { connectDb } from "../db/connect.ts";
 import { resolveDestinationId } from "../db/delivery-ledger.ts";
 import { buildDestinationKey } from "../notify/destination-identity.ts";
 import { backfillLegacyDeliveryKeys } from "./delivery-cutover.ts";
+import { countByHost } from "./detect-host-outage.ts";
 import { drainDestinationOutbox } from "./drain-outbox.ts";
 import type { CheckStats } from "./handle-items.ts";
-import { processSubscriptionCheck } from "./process-subscription.ts";
+import { type PendingFailure, processSubscriptionCheck } from "./process-subscription.ts";
+import { type ResolveFailuresResult, resolveSubscriptionFailures } from "./resolve-failures.ts";
 
 const runCheckOptionsSchema = z.object({
   name: z.string().optional(),
@@ -39,13 +41,20 @@ const createChannelQueue = () => {
   };
 };
 
-const printFinalSummary = (stats: CheckStats, dryRun: boolean, isJson: boolean): void => {
+const printFinalSummary = (
+  stats: CheckStats,
+  dryRun: boolean,
+  isJson: boolean,
+  outage: ResolveFailuresResult,
+): void => {
   if (isJson) {
     printJsonSuccess({
       sent: stats.sent,
       skipped: stats.skipped,
       errors: stats.errors,
       network_skipped: stats.networkSkipped,
+      outage_suspected: outage.outageSuspected,
+      outaged_hosts: outage.outagedHosts,
     });
     return;
   }
@@ -64,6 +73,22 @@ const printFinalSummary = (stats: CheckStats, dryRun: boolean, isJson: boolean):
     parts.push(`${stats.networkSkipped} skipped (network unavailable)`);
   }
   printStdout(parts.join(", "));
+
+  if (outage.outageSuspected) {
+    printStdout(
+      `Most subscriptions failed this run (${outage.suppressed}/${outage.total}). ` +
+        "Assuming a local network problem: failure counters and alerts were not updated.",
+    );
+    return;
+  }
+
+  if (outage.outagedHosts.length > 0) {
+    printStdout(
+      `Every subscription on ${outage.outagedHosts.join(", ")} failed this run ` +
+        `(${outage.suppressed} total). Assuming the host is down: ` +
+        "failure counters and alerts were not updated.",
+    );
+  }
 };
 
 const resolveExitCode = (stats: CheckStats): number => {
@@ -99,6 +124,8 @@ export const runCheck = async ({
     const limit = pLimit(Math.max(1, concurrency));
     const enqueueForChannel = createChannelQueue();
     const tasks: Array<Promise<void>> = [];
+    const failures: PendingFailure[] = [];
+    const attemptedRssUrls: string[] = [];
     const destinations = new Map<number, { destinationId: number; effectiveChannelUrl: string }>();
 
     for (const channelEntry of channels) {
@@ -108,6 +135,7 @@ export const runCheck = async ({
       backfillLegacyDeliveryKeys(db, destinationId, channelEntry.name);
 
       for (const subscription of channelEntry.subscriptions) {
+        attemptedRssUrls.push(subscription.rss_url);
         tasks.push(
           limit(async () => {
             await processSubscriptionCheck({
@@ -120,7 +148,7 @@ export const runCheck = async ({
               isJson,
               isVerbose,
               stats,
-              enqueueForChannel,
+              failures,
               linkTransforms: configState.config.link_transforms,
             });
           }),
@@ -129,6 +157,16 @@ export const runCheck = async ({
     }
 
     await Promise.all(tasks);
+    const outage = await resolveSubscriptionFailures({
+      failures,
+      totalSubscriptions: attemptedRssUrls.length,
+      attemptsByHost: countByHost(attemptedRssUrls),
+      db,
+      dryRun,
+      stats,
+      enqueueForChannel,
+    });
+
     if (!dryRun) {
       await Promise.all(
         [...destinations.values()].map(({ destinationId, effectiveChannelUrl }) =>
@@ -146,7 +184,7 @@ export const runCheck = async ({
       );
     }
     await flushArchivePool();
-    printFinalSummary(stats, dryRun, isJson);
+    printFinalSummary(stats, dryRun, isJson, outage);
     return resolveExitCode(stats);
   } finally {
     sqlite.close();

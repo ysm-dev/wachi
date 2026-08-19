@@ -1,12 +1,24 @@
 import { z } from "zod";
 import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
-import { isNetworkAvailable, isNetworkLevelError } from "../http/check-connectivity.ts";
+import { isNetworkLevelError } from "../http/check-connectivity.ts";
 import { checkRssSubscription } from "./check-rss.ts";
-import { handleSubscriptionFailure } from "./handle-failure.ts";
 import type { CheckStats } from "./handle-items.ts";
 
-type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
+/**
+ * A failure captured during the check phase but not yet acted on.
+ *
+ * Failure handling is deferred until every subscription in the run has been
+ * attempted, because the run-wide failure ratio is the signal used to decide
+ * whether these are real per-feed failures or one local outage.
+ */
+export type PendingFailure = {
+  channelName: string;
+  effectiveChannelUrl: string;
+  subscription: SubscriptionConfig;
+  error: unknown;
+  networkLevel: boolean;
+};
 
 const processSubscriptionOptionsSchema = z.object({
   channelName: z.string(),
@@ -18,7 +30,7 @@ const processSubscriptionOptionsSchema = z.object({
   isJson: z.boolean(),
   isVerbose: z.boolean(),
   stats: z.custom<CheckStats>(),
-  enqueueForChannel: z.custom<QueueFn>(),
+  failures: z.custom<PendingFailure[]>(),
   linkTransforms: z.custom<LinkTransform[]>(),
 });
 
@@ -34,7 +46,7 @@ export const processSubscriptionCheck = async ({
   isJson,
   isVerbose,
   stats,
-  enqueueForChannel,
+  failures,
   linkTransforms,
 }: ProcessSubscriptionOptions): Promise<void> => {
   try {
@@ -50,20 +62,16 @@ export const processSubscriptionCheck = async ({
       linkTransforms,
     });
   } catch (error) {
-    if (isNetworkLevelError(error) && !(await isNetworkAvailable())) {
-      stats.networkSkipped += 1;
-      return;
-    }
-
-    await handleSubscriptionFailure({
+    // Every failure is collected, including confirmed network-level ones. Skipping
+    // them here would remove them from the run-wide failure ratio and let a mixed
+    // outage (some clean fetch errors, some captive-portal parse errors) slip under
+    // the threshold.
+    failures.push({
       channelName,
       effectiveChannelUrl,
       subscription,
-      db,
-      dryRun,
-      stats,
-      enqueueForChannel,
       error,
+      networkLevel: isNetworkLevelError(error),
     });
   }
 };

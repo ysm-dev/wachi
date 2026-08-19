@@ -611,9 +611,49 @@ All zod validation errors are wrapped with `zod-validation-error` for human-read
 
 | Consecutive Failures | Action |
 |----------------------|--------|
-| 1-2 | Silent. Log to SQLite health table. Retry on next check |
-| 3 | Notify user: "wachi: subscription <url> has failed 3 consecutive checks. Last error: <error>" |
-| 10+ | Notify user: "wachi: subscription <url> has been failing for 10+ checks. Consider removing it with `wachi unsub -n <name>`" |
+| 1-9 | Silent. Log to SQLite health table. Retry on next check |
+| 10 | Notify user: "wachi: subscription <url> has failed 10 consecutive checks. Last error: <error>" |
+| 100, then every 100 | Notify user: "wachi: subscription <url> has been failing for <n> consecutive checks. Consider removing it with `wachi unsub -n <name>`" |
+
+### Outage Suppression
+
+Failures are correlated before they are acted on, from coarsest to finest: run level, then host level. A failure matched by either check is reported in the run summary but does not increment `consecutive_failures` and does not raise an alert.
+
+#### Run-Level Outage Suppression
+
+Per-request error classification cannot reliably tell "this feed is broken" from "my network is broken". A dead DNS resolver, a captive portal, a saturated uplink, or a VPN each produce errors that look like ordinary feed failures, and the local-connectivity probe does not catch them: it targets an IP literal (so it survives DNS failure), it answers well inside its timeout on a congested link, and it is never consulted at all when a captive portal returns a real HTTP status.
+
+Correlation across subscriptions is a far stronger signal. Independent hosts do not fail together; when they appear to, the common factor is the machine running the check.
+
+A run is therefore treated as an environment problem when **both** hold:
+
+- at least **5** subscriptions were attempted in the run, and
+- at least **50%** of them failed.
+
+In that case wachi:
+
+- does **not** increment `consecutive_failures` for any subscription
+- does **not** send any failure alerts
+- **does** still report the errors in the run summary, `--json` output and exit code, so scheduled runs stay honest
+
+Because the ratio can only be known once every subscription has been attempted, failure handling is deferred until the check phase completes. All failures count toward the ratio, including ones the connectivity probe would have classified as network-level; excluding them would let a mixed outage slip under the threshold.
+
+Below the 5-subscription minimum the ratio is not meaningful, so failures are always handled individually.
+
+#### Host-Level Outage Suppression
+
+A single backend commonly serves many subscriptions: a self-hosted RSSHub or torss instance, or any large public host. That backend is a single point of failure for everything behind it. When it stops, those subscriptions do not represent N broken feeds spread across N channels; they represent one process that is not running.
+
+Such an outage does not need to be a large share of the run. A self-hosted service can back 15% of all subscriptions while spanning half the channels, which stays well under the run-level threshold while still producing a channel-wide flood.
+
+Subscriptions are therefore grouped by the **host of `rss_url`, including the port**. The port matters: one machine routinely runs several unrelated feed services on localhost, and one dying must not implicate the others.
+
+A host is treated as down when **both** hold:
+
+- at least **3** of its subscriptions were attempted in the run, and
+- **all** of them failed.
+
+Requiring every subscription on the host to fail is what keeps real breakage visible: one dead route on a healthy host still fails alone and still alerts normally. The 3-subscription minimum keeps "every subscription on this host failed" distinguishable from "the one feed on this host is broken".
 
 ### Health Counter Reset
 
@@ -627,6 +667,7 @@ The `consecutive_failures` counter resets to 0 on **any successful check** (RSS 
 - Ambiguous post-dispatch failure: retain an uncertain row and never retry automatically
 - Check succeeds: reset `consecutive_failures` to 0
 - Check fails (HTTP error, timeout, parse error): increment failure counter, no delivery-key changes
+- Run-level or host-level outage suspected: leave the affected failure counters untouched, no delivery-key changes
 
 ## Security
 
