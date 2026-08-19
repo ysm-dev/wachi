@@ -230,6 +230,7 @@ export const subCommand = defineCommand({
             stats,
             sourceIdentity: baseIdentity,
             linkTransforms: configState.config.link_transforms,
+            appriseUrl: effectiveChannelUrl,
           });
 
           const latestItem = prepared.baselineItems.at(-1);
@@ -247,6 +248,7 @@ export const subCommand = defineCommand({
               stats,
               sourceIdentity: withLinkFallbackAvatar(baseIdentity, latestItem.link),
               linkTransforms: configState.config.link_transforms,
+              appriseUrl: effectiveChannelUrl,
             });
             await drainDestinationOutbox({
               db,

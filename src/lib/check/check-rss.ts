@@ -11,6 +11,7 @@ import { type CheckStats, handleSubscriptionItems } from "./handle-items.ts";
 
 const checkRssOptionsSchema = z.object({
   channelName: z.string(),
+  effectiveChannelUrl: z.string(),
   destinationId: z.number().int().positive(),
   subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
@@ -25,6 +26,7 @@ type CheckRssOptions = z.infer<typeof checkRssOptionsSchema>;
 
 export const checkRssSubscription = async ({
   channelName,
+  effectiveChannelUrl,
   destinationId,
   subscription,
   db,
@@ -62,6 +64,7 @@ export const checkRssSubscription = async ({
     stats,
     sourceIdentity: fetched.sourceIdentity,
     linkTransforms,
+    appriseUrl: effectiveChannelUrl,
   });
 
   if (!dryRun) {

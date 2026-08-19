@@ -52,6 +52,7 @@ export const processSubscriptionCheck = async ({
   try {
     await checkRssSubscription({
       channelName,
+      effectiveChannelUrl,
       destinationId,
       subscription,
       db,

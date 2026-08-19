@@ -52,6 +52,10 @@ const handleItemsOptionsSchema = z.object({
   stats: z.custom<CheckStats>(),
   sourceIdentity: z.custom<SourceIdentity>().optional(),
   linkTransforms: z.custom<LinkTransform[]>(),
+  // Effective destination Apprise URL, used only to look up the scheme's
+  // upstream body-length limit (see notify/format.ts). Optional so existing
+  // callers/tests that don't know the destination keep prior behavior.
+  appriseUrl: z.string().optional(),
 });
 
 type HandleItemsOptions = z.infer<typeof handleItemsOptionsSchema>;
@@ -90,6 +94,7 @@ export const handleSubscriptionItems = async ({
   stats,
   sourceIdentity,
   linkTransforms,
+  appriseUrl,
 }: HandleItemsOptions): Promise<number> => {
   const encountered = new Set<string>();
   let accepted = 0;
@@ -135,7 +140,7 @@ export const handleSubscriptionItems = async ({
     const admitted = admitDeliveryWithOutbox(db, {
       destinationId,
       linkKey,
-      payload: formatNotificationBody(notificationLink, item.title),
+      payload: formatNotificationBody(notificationLink, item.title, appriseUrl),
       source: serializeDeliverySource({
         channelName,
         subscriptionUrl,
