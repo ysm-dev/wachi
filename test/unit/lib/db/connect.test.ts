@@ -160,6 +160,7 @@ describe("connectDb", () => {
       "0000_init",
       "0001_add-indexes",
       "0002_public_yellow_claw",
+      "0003_mute_alex_power",
     ]);
     expect(second).toEqual(first);
   });
@@ -179,6 +180,7 @@ describe("connectDb", () => {
       "0000_init",
       "0001_add-indexes",
       "0002_public_yellow_claw",
+      "0003_mute_alex_power",
     ]);
   });
 

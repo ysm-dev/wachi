@@ -3,8 +3,9 @@ import { printStderr, printStdout } from "../cli/io.ts";
 import type { LinkTransform } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import {
-  admitDeliveryKey,
-  admitDeliveryWithOutbox,
+  admitDeliveriesWithOutbox,
+  admitDeliveryKeys,
+  type DeliveryAdmission,
   hasDeliveryKey,
 } from "../db/delivery-ledger.ts";
 import { serializeDeliverySource } from "../notify/delivery-source.ts";
@@ -38,6 +39,12 @@ const itemSchema = z.object({
 });
 
 type Item = z.infer<typeof itemSchema>;
+
+type PreparedItem = {
+  item: Item;
+  canonicalLink: string;
+  linkKey: Buffer;
+};
 
 const handleItemsOptionsSchema = z.object({
   items: z.array(itemSchema),
@@ -97,6 +104,7 @@ export const handleSubscriptionItems = async ({
   appriseUrl,
 }: HandleItemsOptions): Promise<number> => {
   const encountered = new Set<string>();
+  const preparedItems: PreparedItem[] = [];
   let accepted = 0;
 
   for (const item of items) {
@@ -114,7 +122,11 @@ export const handleSubscriptionItems = async ({
     }
     encountered.add(key);
 
-    if (dryRun) {
+    preparedItems.push({ item, canonicalLink, linkKey });
+  }
+
+  if (dryRun) {
+    for (const { item, linkKey } of preparedItems) {
       if (hasDeliveryKey(db, destinationId, linkKey)) {
         stats.skipped += 1;
         continue;
@@ -124,20 +136,24 @@ export const handleSubscriptionItems = async ({
       if (!isJson) {
         printStdout(`[dry-run] would send: ${item.title} -> ${channelName}`);
       }
-      continue;
     }
+    return accepted;
+  }
 
-    if (baseline) {
-      if (admitDeliveryKey(db, destinationId, linkKey)) {
-        accepted += 1;
-      }
-      stats.skipped += 1;
-      continue;
-    }
+  if (baseline) {
+    accepted = admitDeliveryKeys(
+      db,
+      destinationId,
+      preparedItems.map(({ linkKey }) => linkKey),
+    );
+    stats.skipped += preparedItems.length;
+    return accepted;
+  }
 
+  const admissions: DeliveryAdmission[] = preparedItems.map(({ item, canonicalLink, linkKey }) => {
     const notificationLink = transformLink(canonicalLink, linkTransforms);
     const itemSourceIdentity = withLinkFallbackAvatar(sourceIdentity, canonicalLink);
-    const admitted = admitDeliveryWithOutbox(db, {
+    return {
       destinationId,
       linkKey,
       payload: formatNotificationBody(notificationLink, item.title, appriseUrl),
@@ -149,12 +165,22 @@ export const handleSubscriptionItems = async ({
         sourceIdentity: itemSourceIdentity,
       }),
       link: canonicalLink,
-    });
+    };
+  });
+  const admittedItems = admitDeliveriesWithOutbox(db, admissions);
 
+  for (let index = 0; index < admittedItems.length; index += 1) {
+    const admitted = admittedItems[index] ?? false;
+    const prepared = preparedItems[index];
+    if (!prepared) {
+      continue;
+    }
     if (!admitted) {
       stats.skipped += 1;
       if (isVerbose) {
-        printStderr(`[verbose] skip: ${item.title} (link already accepted for destination)`);
+        printStderr(
+          `[verbose] skip: ${prepared.item.title} (link already accepted for destination)`,
+        );
       }
     } else {
       accepted += 1;

@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import type { WachiDb } from "./connect.ts";
 import { health } from "./schema.ts";
 
@@ -6,21 +7,8 @@ export const markHealthSuccess = (
   channelUrl: string,
   subscriptionUrl: string,
 ): void => {
-  db.insert(health)
-    .values({
-      channelUrl,
-      subscriptionUrl,
-      consecutiveFailures: 0,
-      lastError: null,
-      lastFailureAt: null,
-    })
-    .onConflictDoUpdate({
-      target: [health.channelUrl, health.subscriptionUrl],
-      set: {
-        consecutiveFailures: 0,
-        lastError: null,
-        lastFailureAt: null,
-      },
-    })
+  // Absence represents healthy state, avoiding a durable row for every feed.
+  db.delete(health)
+    .where(and(eq(health.channelUrl, channelUrl), eq(health.subscriptionUrl, subscriptionUrl)))
     .run();
 };

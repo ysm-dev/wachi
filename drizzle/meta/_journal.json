@@ -22,6 +22,13 @@
       "when": 1783698860456,
       "tag": "0002_public_yellow_claw",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787366165465,
+      "tag": "0003_mute_alex_power",
+      "breakpoints": true
     }
   ]
 }

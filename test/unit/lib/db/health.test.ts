@@ -61,6 +61,7 @@ describe("health db operations", () => {
 
     expect(state.consecutiveFailures).toBe(0);
     expect(state.lastError).toBeNull();
+    expect(listHealthStates(db)).toEqual([]);
   });
 
   it("listHealthStates returns persisted records", () => {

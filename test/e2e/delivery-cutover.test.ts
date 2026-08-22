@@ -101,6 +101,66 @@ const readNotificationBodies = async (path: string): Promise<string[]> => {
 };
 
 describe("delivery ledger cutover", () => {
+  it("fetches a shared RSS URL once per run across destinations", async () => {
+    const harness = await createHarness("wachi-e2e-shared-feed-");
+    let etag = '"shared-v1"';
+    let feedItems = [{ title: "Shared Item", link: "https://example.com/shared" }];
+    let requests = 0;
+    const conditionalHeaders: Array<string | null> = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests += 1;
+        conditionalHeaders.push(request.headers.get("if-none-match"));
+        if (request.headers.get("if-none-match") === etag) {
+          return new Response(null, { status: 304, headers: { etag } });
+        }
+        return new Response(createFeed(feedItems), {
+          headers: { "content-type": "application/rss+xml", etag },
+        });
+      },
+    });
+    servers.push(server);
+    const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    await writeFile(
+      harness.configPath,
+      `channels:
+  - name: "first"
+    apprise_url: "slack://token/first"
+    subscriptions:
+      - url: "${feedUrl}"
+        rss_url: "${feedUrl}"
+  - name: "second"
+    apprise_url: "slack://token/second"
+    subscriptions:
+      - url: "${feedUrl}"
+        rss_url: "${feedUrl}"
+`,
+      "utf8",
+    );
+
+    const baseline = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    const unchanged = await runCli(
+      ["check", "--json", "--config", harness.configPath],
+      harness.env,
+    );
+    etag = '"shared-v2"';
+    feedItems = [
+      { title: "New Shared Item", link: "https://example.com/new-shared" },
+      ...feedItems,
+    ];
+    const changed = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+
+    expect(baseline.exitCode).toBe(0);
+    expect(JSON.parse(baseline.stdout).data).toMatchObject({ sent: [], skipped: 2, errors: [] });
+    expect(unchanged.exitCode).toBe(0);
+    expect(changed.exitCode).toBe(0);
+    expect(JSON.parse(changed.stdout).data.sent).toHaveLength(2);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(2);
+    expect(requests).toBe(3);
+    expect(conditionalHeaders).toEqual([null, '"shared-v1"', '"shared-v1"']);
+  });
+
   it("baselines older items and sends a new latest link once per destination", async () => {
     const harness = await createHarness("wachi-e2e-delivery-latest-");
     const sharedLatest = "https://example.com/shared-latest";

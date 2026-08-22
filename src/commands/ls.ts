@@ -31,6 +31,13 @@ export const lsCommand = defineCommand({
       const parsedArgs = parseCommandArgs(lsArgsSchema, args);
       const configState = await readConfig(parsedArgs.config);
 
+      if (commandJson(parsedArgs)) {
+        printJsonSuccess({
+          channels: configState.config.channels,
+        });
+        return 0;
+      }
+
       const { sqlite, db } = await connectDb();
       const health = listHealthStates(db);
       sqlite.close();
@@ -39,13 +46,6 @@ export const lsCommand = defineCommand({
       for (const state of health) {
         const key = `${state.channelUrl}::${state.subscriptionUrl}`;
         failuresByKey.set(key, state.consecutiveFailures);
-      }
-
-      if (commandJson(parsedArgs)) {
-        printJsonSuccess({
-          channels: configState.config.channels,
-        });
-        return 0;
       }
 
       if (configState.config.channels.length === 0) {

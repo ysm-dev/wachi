@@ -43,6 +43,14 @@ const fetchRssItemsResultSchema = z.object({
 
 export type FetchRssItemsResult = z.infer<typeof fetchRssItemsResultSchema>;
 
+export type FetchedRssDocument = {
+  notModified: boolean;
+  items: FetchRssItemsResult["items"];
+  feedTitle: string | null;
+  feedImageUrl: string | null;
+  validators: RssValidators;
+};
+
 const validatorKey = (rssUrl: string, validatorScope?: string): string => {
   return validatorScope ? `${validatorScope}:${rssUrl}` : rssUrl;
 };
@@ -56,6 +64,15 @@ export type RssValidators = {
   etag: string | null;
   lastModified: string | null;
 };
+
+export const readRssValidators = (
+  db: WachiDb,
+  rssUrl: string,
+  validatorScope?: string,
+): RssValidators => ({
+  etag: getMetaValue(db, etagMetaKey(rssUrl, validatorScope)),
+  lastModified: getMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope)),
+});
 
 export const persistRssValidators = (
   db: WachiDb,
@@ -87,7 +104,7 @@ const resolveOptionalHttpUrl = (value: string | null, baseUrl: string): string |
   }
 };
 
-const buildSourceIdentity = async ({
+export const resolveRssSourceIdentity = async ({
   subscriptionUrl,
   rssUrl,
   feedTitle,
@@ -118,28 +135,27 @@ const buildSourceIdentity = async ({
   return { username, avatarUrl };
 };
 
-export const fetchRssSubscriptionItems = async ({
-  subscriptionUrl,
+export const fetchRssDocument = async ({
   rssUrl,
-  db,
-  useConditionalRequest = false,
-  validatorScope,
-}: FetchRssItemsOptions): Promise<FetchRssItemsResult> => {
-  await waitForDomainRateLimit(rssUrl);
+  requestValidators,
+  rateLimitAcquired = false,
+}: {
+  rssUrl: string;
+  requestValidators?: RssValidators;
+  rateLimitAcquired?: boolean;
+}): Promise<FetchedRssDocument> => {
+  if (!rateLimitAcquired) {
+    await waitForDomainRateLimit(rssUrl);
+  }
 
   const headers: Record<string, string> = {
     Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*",
   };
-
-  if (useConditionalRequest && db) {
-    const etag = getMetaValue(db, etagMetaKey(rssUrl, validatorScope));
-    const lastModified = getMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope));
-    if (etag) {
-      headers["If-None-Match"] = etag;
-    }
-    if (lastModified) {
-      headers["If-Modified-Since"] = lastModified;
-    }
+  if (requestValidators?.etag) {
+    headers["If-None-Match"] = requestValidators.etag;
+  }
+  if (requestValidators?.lastModified) {
+    headers["If-Modified-Since"] = requestValidators.lastModified;
   }
 
   const response = await http.raw(rssUrl, {
@@ -152,9 +168,18 @@ export const fetchRssSubscriptionItems = async ({
   });
 
   if (response.status === 304) {
+    if (!requestValidators?.etag && !requestValidators?.lastModified) {
+      throw new WachiError(
+        `Failed to fetch ${rssUrl}`,
+        "The server returned 304 Not Modified without a conditional request.",
+        "Try again later or verify the feed URL.",
+      );
+    }
     return {
       notModified: true,
       items: [],
+      feedTitle: null,
+      feedImageUrl: null,
       validators: {
         etag: response.headers.get("etag"),
         lastModified: response.headers.get("last-modified"),
@@ -172,14 +197,6 @@ export const fetchRssSubscriptionItems = async ({
 
   const xml = typeof response._data === "string" ? response._data : "";
   const parsed = await parseRssFeed(xml, rssUrl);
-  const sourceIdentity = await buildSourceIdentity({
-    subscriptionUrl,
-    rssUrl,
-    feedTitle: parsed.title,
-    feedImageUrl: parsed.imageUrl,
-    db,
-  });
-
   return {
     notModified: false,
     items: parsed.items.map((item) => ({
@@ -187,10 +204,45 @@ export const fetchRssSubscriptionItems = async ({
       link: canonicalizeItemUrl(item.link, rssUrl) ?? item.link,
       publishedAt: item.publishedAt,
     })),
-    sourceIdentity,
+    feedTitle: parsed.title,
+    feedImageUrl: parsed.imageUrl,
     validators: {
       etag: response.headers.get("etag"),
       lastModified: response.headers.get("last-modified"),
     },
+  };
+};
+
+export const fetchRssSubscriptionItems = async ({
+  subscriptionUrl,
+  rssUrl,
+  db,
+  useConditionalRequest = false,
+  validatorScope,
+}: FetchRssItemsOptions): Promise<FetchRssItemsResult> => {
+  const requestValidators =
+    useConditionalRequest && db ? readRssValidators(db, rssUrl, validatorScope) : undefined;
+  const document = await fetchRssDocument({ rssUrl, requestValidators });
+  if (document.notModified) {
+    return {
+      notModified: true,
+      items: [],
+      validators: document.validators,
+    };
+  }
+
+  const sourceIdentity = await resolveRssSourceIdentity({
+    subscriptionUrl,
+    rssUrl,
+    feedTitle: document.feedTitle,
+    feedImageUrl: document.feedImageUrl,
+    db,
+  });
+
+  return {
+    notModified: false,
+    items: document.items,
+    sourceIdentity,
+    validators: document.validators,
   };
 };

@@ -105,7 +105,12 @@ export const deliveryOutbox = sqliteTable(
       sql`${table.state} IN ('pending', 'reserved', 'dispatching', 'uncertain')`,
     ),
     check("delivery_outbox_attempts_check", sql`${table.attempts} >= 0`),
-    index("idx_delivery_outbox_claim").on(table.destinationId, table.state, table.availableAt),
+    index("idx_delivery_outbox_claim").on(
+      table.destinationId,
+      table.state,
+      table.availableAt,
+      table.enqueuedSeq,
+    ),
     uniqueIndex("idx_delivery_outbox_active_destination")
       .on(table.destinationId)
       .where(sql`${table.state} IN ('reserved', 'dispatching')`),

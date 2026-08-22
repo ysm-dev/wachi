@@ -3,10 +3,10 @@ import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { markHealthSuccess } from "../db/mark-health-success.ts";
 import {
-  fetchRssSubscriptionItems,
+  type FetchRssItemsResult,
   persistRssValidators,
 } from "../subscriptions/fetch-rss-subscription-items.ts";
-import { hasDeliveryCutover, markDeliveryCutover } from "./delivery-cutover.ts";
+import { markDeliveryCutover } from "./delivery-cutover.ts";
 import { type CheckStats, handleSubscriptionItems } from "./handle-items.ts";
 
 const checkRssOptionsSchema = z.object({
@@ -20,6 +20,8 @@ const checkRssOptionsSchema = z.object({
   isVerbose: z.boolean(),
   stats: z.custom<CheckStats>(),
   linkTransforms: z.custom<LinkTransform[]>(),
+  cutoverComplete: z.boolean(),
+  fetchItems: z.custom<() => Promise<FetchRssItemsResult>>(),
 });
 
 type CheckRssOptions = z.infer<typeof checkRssOptionsSchema>;
@@ -35,16 +37,11 @@ export const checkRssSubscription = async ({
   isVerbose,
   stats,
   linkTransforms,
+  cutoverComplete,
+  fetchItems,
 }: CheckRssOptions): Promise<void> => {
-  const cutoverComplete = hasDeliveryCutover(db, destinationId, subscription.rss_url);
   const validatorScope = `destination:${destinationId}`;
-  const fetched = await fetchRssSubscriptionItems({
-    subscriptionUrl: subscription.url,
-    rssUrl: subscription.rss_url,
-    db,
-    useConditionalRequest: cutoverComplete,
-    validatorScope,
-  });
+  const fetched = await fetchItems();
 
   if (fetched.notModified) {
     markHealthSuccess(db, channelName, subscription.url);

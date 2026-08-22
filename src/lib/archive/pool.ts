@@ -6,10 +6,23 @@ export const createArchivePool = () => {
   const inflightTasks = new Set<Promise<void>>();
 
   let activeCount = 0;
+  let pendingIndex = 0;
+
+  const pendingCount = (): number => pendingTasks.length - pendingIndex;
+
+  const compactPendingTasks = (): void => {
+    if (pendingIndex < 1024 || pendingIndex * 2 < pendingTasks.length) {
+      return;
+    }
+    pendingTasks.splice(0, pendingIndex);
+    pendingIndex = 0;
+  };
 
   const startNextTasks = (): void => {
-    while (activeCount < ARCHIVE_POOL_MAX_CONCURRENT && pendingTasks.length > 0) {
-      const task = pendingTasks.shift();
+    while (activeCount < ARCHIVE_POOL_MAX_CONCURRENT && pendingCount() > 0) {
+      const task = pendingTasks[pendingIndex];
+      pendingIndex += 1;
+      compactPendingTasks();
       if (!task) {
         return;
       }
@@ -37,12 +50,12 @@ export const createArchivePool = () => {
   };
 
   const flushArchivePool = async (timeoutMs = ARCHIVE_POOL_FLUSH_TIMEOUT_MS): Promise<void> => {
-    if (pendingTasks.length === 0 && inflightTasks.size === 0) {
+    if (pendingCount() === 0 && inflightTasks.size === 0) {
       return;
     }
 
     const deadline = Date.now() + timeoutMs;
-    while (pendingTasks.length > 0 || inflightTasks.size > 0) {
+    while (pendingCount() > 0 || inflightTasks.size > 0) {
       const remainingMs = deadline - Date.now();
       if (remainingMs <= 0) {
         return;
@@ -62,6 +75,7 @@ export const createArchivePool = () => {
   const resetArchivePoolForTest = (): void => {
     activeCount = 0;
     pendingTasks.length = 0;
+    pendingIndex = 0;
     inflightTasks.clear();
   };
 

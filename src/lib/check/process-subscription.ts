@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
 import { isNetworkLevelError } from "../http/check-connectivity.ts";
+import type { FetchRssItemsResult } from "../subscriptions/fetch-rss-subscription-items.ts";
 import { checkRssSubscription } from "./check-rss.ts";
 import type { CheckStats } from "./handle-items.ts";
 
@@ -32,6 +33,8 @@ const processSubscriptionOptionsSchema = z.object({
   stats: z.custom<CheckStats>(),
   failures: z.custom<PendingFailure[]>(),
   linkTransforms: z.custom<LinkTransform[]>(),
+  cutoverComplete: z.boolean(),
+  fetchItems: z.custom<() => Promise<FetchRssItemsResult>>(),
 });
 
 type ProcessSubscriptionOptions = z.infer<typeof processSubscriptionOptionsSchema>;
@@ -48,6 +51,8 @@ export const processSubscriptionCheck = async ({
   stats,
   failures,
   linkTransforms,
+  cutoverComplete,
+  fetchItems,
 }: ProcessSubscriptionOptions): Promise<void> => {
   try {
     await checkRssSubscription({
@@ -61,6 +66,8 @@ export const processSubscriptionCheck = async ({
       isVerbose,
       stats,
       linkTransforms,
+      cutoverComplete,
+      fetchItems,
     });
   } catch (error) {
     // Every failure is collected, including confirmed network-level ones. Skipping

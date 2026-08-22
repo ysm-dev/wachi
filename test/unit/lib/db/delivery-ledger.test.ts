@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ConnectedDb, connectDb } from "../../../../src/lib/db/connect.ts";
 import {
+  admitDeliveriesWithOutbox,
   admitDeliveryKey,
   admitDeliveryWithOutbox,
   listDeliveryKeys,
@@ -90,6 +91,34 @@ describe("delivery ledger", () => {
       lastError: null,
     });
     expect(typeof outbox[0]?.enqueuedSeq).toBe("number");
+  });
+
+  it("admits a feed batch in order and reports duplicate rows", () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    admitDeliveryKey(db, destinationId, key(2));
+
+    const results = admitDeliveriesWithOutbox(
+      db,
+      [2, 3, 4].map((value) => ({
+        destinationId,
+        linkKey: key(value),
+        payload: `payload-${value}`,
+        source: `source-${value}`,
+        link: `https://example.com/${value}`,
+        availableAt: 100,
+      })),
+    );
+
+    expect(results).toEqual([false, true, true]);
+    expect(listDeliveryKeys(db, destinationId)).toHaveLength(3);
+    expect(listDeliveryOutbox(db, destinationId).map(({ link }) => link)).toEqual([
+      "https://example.com/3",
+      "https://example.com/4",
+    ]);
   });
 
   it("rejects keys that are not 32 bytes", () => {

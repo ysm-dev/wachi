@@ -125,37 +125,59 @@ export const admitDeliveryKeys = (
 };
 
 export const admitDeliveryWithOutbox = (db: WachiDb, admission: DeliveryAdmission): boolean => {
-  validateDestinationId(admission.destinationId);
-  const linkKey = normalizeDatabaseKey(admission.linkKey, "linkKey");
-  const availableAt = admission.availableAt ?? Date.now();
-  if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
-    throw new RangeError("availableAt must be a non-negative integer");
+  return admitDeliveriesWithOutbox(db, [admission])[0] ?? false;
+};
+
+export const admitDeliveriesWithOutbox = (
+  db: WachiDb,
+  admissions: DeliveryAdmission[],
+): boolean[] => {
+  if (admissions.length === 0) {
+    return [];
   }
+
+  const normalizedAdmissions = admissions.map((admission) => {
+    validateDestinationId(admission.destinationId);
+    const availableAt = admission.availableAt ?? Date.now();
+    if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
+      throw new RangeError("availableAt must be a non-negative integer");
+    }
+    return {
+      ...admission,
+      linkKey: normalizeDatabaseKey(admission.linkKey, "linkKey"),
+      availableAt,
+    };
+  });
 
   return db.transaction(
     (tx) => {
-      const inserted = tx
-        .insert(deliveryKeys)
-        .values({ destinationId: admission.destinationId, linkKey })
-        .onConflictDoNothing()
-        .returning({ destinationId: deliveryKeys.destinationId })
-        .get();
-      if (!inserted) {
-        return false;
-      }
+      const results: boolean[] = [];
+      for (const admission of normalizedAdmissions) {
+        const inserted = tx
+          .insert(deliveryKeys)
+          .values({ destinationId: admission.destinationId, linkKey: admission.linkKey })
+          .onConflictDoNothing()
+          .returning({ destinationId: deliveryKeys.destinationId })
+          .get();
+        if (!inserted) {
+          results.push(false);
+          continue;
+        }
 
-      tx.insert(deliveryOutbox)
-        .values({
-          destinationId: admission.destinationId,
-          linkKey,
-          payload: admission.payload,
-          source: admission.source,
-          link: admission.link,
-          enqueuedSeq: nextOutboxSequence(),
-          availableAt,
-        })
-        .run();
-      return true;
+        tx.insert(deliveryOutbox)
+          .values({
+            destinationId: admission.destinationId,
+            linkKey: admission.linkKey,
+            payload: admission.payload,
+            source: admission.source,
+            link: admission.link,
+            enqueuedSeq: nextOutboxSequence(),
+            availableAt: admission.availableAt,
+          })
+          .run();
+        results.push(true);
+      }
+      return results;
     },
     { behavior: "immediate" },
   );
