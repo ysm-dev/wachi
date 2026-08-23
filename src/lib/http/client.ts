@@ -1,6 +1,6 @@
 import { request as requestHttp } from "node:http";
 import { request as requestHttps } from "node:https";
-import { Readable } from "node:stream";
+import { pipeline, Readable } from "node:stream";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { ofetch } from "ofetch";
 import { VERSION } from "../../version.ts";
@@ -89,12 +89,11 @@ const requestPinnedAddress = async (
   const parsedUrl = new URL(url);
   // Bun 1.3.10 loses TLS hostname context when https.request uses a custom
   // lookup. Connect to the validated IP directly while preserving Host/SNI.
-  const connectionUrl = new URL(parsedUrl);
-  connectionUrl.hostname = address.family === 6 ? `[${address.address}]` : address.address;
   const tlsHostname = parsedUrl.hostname.replace(/^\[(.*)\]$/, "$1");
   const requestHeaders = new Headers(headers);
   requestHeaders.set("User-Agent", `wachi/${VERSION}`);
   requestHeaders.set("Accept-Encoding", "gzip, deflate, br");
+  requestHeaders.set("Connection", "close");
   // Bun 1.3.10 incorrectly includes a non-default HTTPS port in certificate
   // hostname verification, so keep the TLS Host header port-free.
   requestHeaders.set("Host", parsedUrl.protocol === "https:" ? parsedUrl.hostname : parsedUrl.host);
@@ -103,9 +102,12 @@ const requestPinnedAddress = async (
     let connectionTimeout: ReturnType<typeof setTimeout>;
     const clearConnectionTimeout = () => clearTimeout(connectionTimeout);
     const request = (parsedUrl.protocol === "https:" ? requestHttps : requestHttp)(
-      connectionUrl,
       {
+        hostname: address.address,
+        port: parsedUrl.port || undefined,
+        path: `${parsedUrl.pathname}${parsedUrl.search}`,
         headers: Object.fromEntries(requestHeaders.entries()),
+        agent: false,
         signal,
         servername: tlsHostname,
       },
@@ -115,11 +117,17 @@ const requestPinnedAddress = async (
         let body: Readable = incoming;
         const contentEncoding = incoming.headers["content-encoding"]?.toLowerCase();
         if (hasBody && contentEncoding === "gzip") {
-          body = incoming.pipe(createGunzip());
+          const decoder = createGunzip();
+          body = decoder;
+          pipeline(incoming, decoder, () => {});
         } else if (hasBody && contentEncoding === "deflate") {
-          body = incoming.pipe(createInflate());
+          const decoder = createInflate();
+          body = decoder;
+          pipeline(incoming, decoder, () => {});
         } else if (hasBody && contentEncoding === "br") {
-          body = incoming.pipe(createBrotliDecompress());
+          const decoder = createBrotliDecompress();
+          body = decoder;
+          pipeline(incoming, decoder, () => {});
         }
 
         const responseHeaders = new Headers();

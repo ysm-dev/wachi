@@ -12,16 +12,18 @@ afterEach(() => {
 describe("fetchBoundedText", () => {
   it("fetches an explicitly requested local hostname through pinned DNS", async () => {
     let receivedHost = "";
+    let receivedPath = "";
     const server = Bun.serve({
       port: 0,
       fetch(request) {
         receivedHost = request.headers.get("host") ?? "";
+        receivedPath = new URL(request.url).pathname + new URL(request.url).search;
         return new Response("ok");
       },
     });
     servers.push(server);
 
-    const response = await fetchBoundedText(`http://localhost:${server.port}`, {
+    const response = await fetchBoundedText(`http://localhost:${server.port}/feed.xml?page=2`, {
       timeoutMs: 1_000,
       maxBytes: 32,
       retry: 0,
@@ -29,6 +31,7 @@ describe("fetchBoundedText", () => {
 
     expect(response.body).toBe("ok");
     expect(receivedHost).toBe(`localhost:${server.port}`);
+    expect(receivedPath).toBe("/feed.xml?page=2");
   });
 
   it("finishes a bodyless 304 response", async () => {
@@ -79,6 +82,32 @@ describe("fetchBoundedText", () => {
               controller.enqueue(new TextEncoder().encode("<rss>"));
             },
           }),
+        );
+      },
+    });
+    servers.push(server);
+
+    await expect(
+      fetchBoundedText(`http://127.0.0.1:${server.port}`, {
+        timeoutMs: 50,
+        maxBytes: 1_024,
+        retry: 0,
+      }),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  it("aborts a compressed response body that never finishes", async () => {
+    const compressed = Bun.gzipSync("<rss>");
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(compressed.subarray(0, compressed.length - 8));
+            },
+          }),
+          { headers: { "content-encoding": "gzip" } },
         );
       },
     });
