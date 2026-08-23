@@ -1,6 +1,7 @@
 import pLimit from "p-limit";
 import { z } from "zod";
 import { getEnv } from "../../utils/env.ts";
+import { WachiError } from "../../utils/error.ts";
 import { flushArchivePool } from "../archive/pool.ts";
 import { printJsonSuccess, printStdout } from "../cli/io.ts";
 import { toChannelNameKey } from "../config/channel-name-key.ts";
@@ -8,6 +9,8 @@ import { readConfig } from "../config/read.ts";
 import type { SubscriptionConfig } from "../config/schema.ts";
 import { connectDb } from "../db/connect.ts";
 import { resolveDestinationId } from "../db/delivery-ledger.ts";
+import { listDeliveryOutbox, rehomeQueuedDelivery } from "../db/delivery-outbox.ts";
+import { parseDeliverySource } from "../notify/delivery-source.ts";
 import { buildDestinationKey } from "../notify/destination-identity.ts";
 import { backfillLegacyDeliveryKeys, hasDeliveryCutover } from "./delivery-cutover.ts";
 import { countByHost } from "./detect-host-outage.ts";
@@ -43,6 +46,31 @@ type FeedGroup = {
 };
 
 export const MAX_CONCURRENT_DESTINATION_DRAINS = 4;
+
+const rehomeQueuedDeliveries = (
+  db: Parameters<typeof listDeliveryOutbox>[0],
+  channelName: string,
+  destinationId: number,
+): void => {
+  const channelKey = toChannelNameKey(channelName);
+  for (const delivery of listDeliveryOutbox(db)) {
+    if (delivery.destinationId === destinationId) {
+      continue;
+    }
+
+    let source: ReturnType<typeof parseDeliverySource>;
+    try {
+      source = parseDeliverySource(delivery.source);
+    } catch {
+      continue;
+    }
+    if (toChannelNameKey(source.channelName) !== channelKey) {
+      continue;
+    }
+
+    rehomeQueuedDelivery(db, delivery, destinationId);
+  }
+};
 
 const createChannelQueue = () => {
   const pending = new Map<string, Promise<void>>();
@@ -94,8 +122,8 @@ const printFinalSummary = (
 
   if (outage.outageSuspected) {
     printStdout(
-      `Most subscriptions failed this run (${outage.suppressed}/${outage.total}). ` +
-        "Assuming a local network problem: failure counters and alerts were not updated.",
+      `Most subscriptions failed this run (${outage.total} checked). ` +
+        "Failures were recorded and milestone alerts remain queued for delivery.",
     );
     return;
   }
@@ -103,8 +131,7 @@ const printFinalSummary = (
   if (outage.outagedHosts.length > 0) {
     printStdout(
       `Every subscription on ${outage.outagedHosts.join(", ")} failed this run ` +
-        `(${outage.suppressed} total). Assuming the host is down: ` +
-        "failure counters and alerts were not updated.",
+        "Failures were recorded and milestone alerts remain queued for delivery.",
     );
   }
 };
@@ -128,16 +155,24 @@ export const runCheck = async ({
   configPath,
 }: RunCheckOptions): Promise<number> => {
   const configState = await readConfig(configPath);
-  const { sqlite, db } = await connectDb();
   const env = getEnv();
+  const channels = name
+    ? configState.config.channels.filter(
+        (entry) => toChannelNameKey(entry.name) === toChannelNameKey(name),
+      )
+    : configState.config.channels;
+
+  if (name && channels.length === 0) {
+    throw new WachiError(
+      `Channel not found: ${name}`,
+      `No channel named ${name} exists in config.`,
+      "Run wachi ls to list configured channels.",
+    );
+  }
+
+  const { sqlite, db } = await connectDb();
 
   try {
-    const channels = name
-      ? configState.config.channels.filter(
-          (entry) => toChannelNameKey(entry.name) === toChannelNameKey(name),
-        )
-      : configState.config.channels;
-
     const stats: CheckStats = { sent: [], skipped: 0, errors: [], networkSkipped: 0 };
     const enqueueForChannel = createChannelQueue();
     const failures: PendingFailure[] = [];
@@ -149,7 +184,10 @@ export const runCheck = async ({
       const effectiveChannelUrl = env.appriseUrlOverride ?? channelEntry.apprise_url;
       const destinationId = resolveDestinationId(db, buildDestinationKey(effectiveChannelUrl));
       destinations.set(destinationId, { destinationId, effectiveChannelUrl });
-      backfillLegacyDeliveryKeys(db, destinationId, channelEntry.name);
+      if (!dryRun) {
+        backfillLegacyDeliveryKeys(db, destinationId, channelEntry.name);
+        rehomeQueuedDeliveries(db, channelEntry.name, destinationId);
+      }
 
       for (const subscription of channelEntry.subscriptions) {
         attemptedRssUrls.push(subscription.rss_url);
@@ -202,7 +240,6 @@ export const runCheck = async ({
       db,
       dryRun,
       stats,
-      enqueueForChannel,
     });
 
     if (!dryRun) {

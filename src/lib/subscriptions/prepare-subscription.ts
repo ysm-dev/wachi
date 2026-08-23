@@ -16,12 +16,12 @@ export const prepareSubscription = async (normalizedUrl: string): Promise<Prepar
   }
 
   if (initialFetch.isRss) {
-    return prepareRssFromDetectedFeed(normalizedUrl, initialFetch.body);
+    return prepareRssFromDetectedFeed(initialFetch.url, initialFetch.body);
   }
 
-  const discoveredRss = await discoverRssFeedUrl(normalizedUrl, initialFetch.body);
+  const discoveredRss = await discoverRssFeedUrl(initialFetch.url, initialFetch.body);
   if (discoveredRss) {
-    return prepareRssFromDiscoveredFeed(normalizedUrl, discoveredRss);
+    return prepareRssFromDiscoveredFeed(initialFetch.url, discoveredRss);
   }
 
   throw new WachiError(

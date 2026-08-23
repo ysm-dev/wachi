@@ -2,11 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { drainDestinationOutbox } from "../../src/lib/check/drain-outbox.ts";
 import { handleSubscriptionFailure } from "../../src/lib/check/handle-failure.ts";
 import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
+import { resolveDestinationId } from "../../src/lib/db/delivery-ledger.ts";
+import { listDeliveryOutbox } from "../../src/lib/db/delivery-outbox.ts";
+import { getHealthState } from "../../src/lib/db/get-health-state.ts";
+import { beginHealthAttempt } from "../../src/lib/db/health-attempt.ts";
+import { markHealthSuccess } from "../../src/lib/db/mark-health-success.ts";
+import { buildDestinationKey } from "../../src/lib/notify/destination-identity.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
-import { googleS2FaviconUrl } from "../../src/lib/subscriptions/source-branding.ts";
 
 type MockProc = {
   exited: Promise<number>;
@@ -66,10 +72,6 @@ afterEach(async () => {
   }
 });
 
-const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>): Promise<void> => {
-  await task();
-};
-
 const makeStats = (): CheckStats => ({
   sent: [],
   skipped: 0,
@@ -78,7 +80,7 @@ const makeStats = (): CheckStats => ({
 });
 
 describe("handleSubscriptionFailure", () => {
-  it("sends failure alerts with source identity", async () => {
+  it("durably queues and sends failure alerts", async () => {
     const server = Bun.serve({
       port: 0,
       fetch(request) {
@@ -112,22 +114,93 @@ describe("handleSubscriptionFailure", () => {
     };
 
     const stats = makeStats();
+    const destinationId = resolveDestinationId(db, buildDestinationKey("discord://12345/token"));
     for (let i = 0; i < 10; i++) {
       await handleSubscriptionFailure({
         channelName: "main",
-        effectiveChannelUrl: "discord://12345/token",
+        destinationId,
         subscription,
         db,
         dryRun: false,
         stats,
-        enqueueForChannel: immediateEnqueue,
         error: new Error("boom"),
+        attemptGeneration: beginHealthAttempt(db, "main", subscription.url),
       });
     }
 
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(1);
+    await drainDestinationOutbox({
+      db,
+      destinationId,
+      effectiveChannelUrl: "discord://12345/token",
+      isJson: true,
+      isVerbose: false,
+      stats,
+    });
+
     expect(sentAppriseUrls).toHaveLength(1);
-    const decoded = decodeURIComponent(sentAppriseUrls[0] ?? "");
-    expect(decoded).toContain("discord://Example Site@12345/token");
-    expect(decoded).toContain(`avatar_url=${googleS2FaviconUrl(subscription.url)}`);
+    expect(decodeURIComponent(sentAppriseUrls[0] ?? "")).toContain("discord://12345/token");
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
+
+    markHealthSuccess(
+      db,
+      "main",
+      subscription.url,
+      beginHealthAttempt(db, "main", subscription.url),
+    );
+    for (let i = 0; i < 10; i++) {
+      await handleSubscriptionFailure({
+        channelName: "main",
+        destinationId,
+        subscription,
+        db,
+        dryRun: false,
+        stats,
+        error: new Error("boom again"),
+        attemptGeneration: beginHealthAttempt(db, "main", subscription.url),
+      });
+    }
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(1);
+  });
+
+  it("rolls back a milestone count when queue admission fails", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const subscription = {
+      url: "https://example.com/site",
+      rss_url: "https://example.com/feed.xml",
+    };
+    const destinationId = resolveDestinationId(db, buildDestinationKey("discord://12345/token"));
+    const stats = makeStats();
+    for (let i = 0; i < 9; i++) {
+      await handleSubscriptionFailure({
+        channelName: "main",
+        destinationId,
+        subscription,
+        db,
+        dryRun: false,
+        stats,
+        error: new Error("boom"),
+        attemptGeneration: beginHealthAttempt(db, "main", subscription.url),
+      });
+    }
+
+    await expect(
+      handleSubscriptionFailure({
+        channelName: "main",
+        destinationId: -1,
+        subscription,
+        db,
+        dryRun: false,
+        stats,
+        error: new Error("boom"),
+        attemptGeneration: beginHealthAttempt(db, "main", subscription.url),
+      }),
+    ).rejects.toThrow("destinationId");
+
+    expect(getHealthState(db, "main", subscription.url).consecutiveFailures).toBe(9);
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
   });
 });

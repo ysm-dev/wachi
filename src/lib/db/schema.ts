@@ -38,6 +38,8 @@ export const health = sqliteTable(
     consecutiveFailures: integer("consecutive_failures").notNull().default(0),
     lastError: text("last_error"),
     lastFailureAt: text("last_failure_at"),
+    lastAttemptAt: text("last_attempt_at"),
+    attemptGeneration: integer("attempt_generation").notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.channelUrl, table.subscriptionUrl] })],
 );
@@ -95,6 +97,8 @@ export const deliveryOutbox = sqliteTable(
     enqueuedSeq: integer("enqueued_seq").notNull(),
     availableAt: integer("available_at").notNull(),
     leaseExpiresAt: integer("lease_expires_at"),
+    claimGeneration: integer("claim_generation").notNull().default(0),
+    claimOwner: text("claim_owner"),
     lastError: text("last_error"),
   },
   (table) => [
@@ -105,6 +109,7 @@ export const deliveryOutbox = sqliteTable(
       sql`${table.state} IN ('pending', 'reserved', 'dispatching', 'uncertain')`,
     ),
     check("delivery_outbox_attempts_check", sql`${table.attempts} >= 0`),
+    check("delivery_outbox_claim_generation_check", sql`${table.claimGeneration} >= 0`),
     index("idx_delivery_outbox_claim").on(
       table.destinationId,
       table.state,

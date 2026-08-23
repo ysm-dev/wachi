@@ -15,7 +15,7 @@ import { serializeDeliverySource } from "../../../../src/lib/notify/delivery-sou
 import { resetSendNotificationStateForTest } from "../../../../src/lib/notify/send.ts";
 
 type Db = ConnectedDb["db"];
-type AppriseOutcome = "success" | "undelivered";
+type AppriseOutcome = "success" | "undelivered" | "spawn-error";
 
 const key = (value: number): Buffer => Buffer.alloc(32, value);
 
@@ -43,6 +43,9 @@ const installSpawnMock = (): void => {
     }
 
     dispatchedBodies.push(command[3] ?? "");
+    if (appriseOutcome === "spawn-error") {
+      throw new Error("failed to spawn apprise");
+    }
     if (appriseOutcome === "undelivered") {
       return {
         exited: Promise.resolve(1),
@@ -135,6 +138,33 @@ describe("drainDestinationOutbox", () => {
     expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
   });
 
+  it("delivers payloads even when nonessential source metadata is corrupted", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    admitDeliveryWithOutbox(db, {
+      destinationId,
+      linkKey: key(2),
+      payload: "must-deliver",
+      source: "not-json",
+      link: "https://example.com/must-deliver",
+    });
+
+    const stats = await drain(db, destinationId);
+
+    expect(dispatchedBodies).toEqual(["must-deliver"]);
+    expect(stats.sent).toEqual([
+      {
+        title: "https://example.com/must-deliver",
+        link: "https://example.com/must-deliver",
+        channel_name: "unknown",
+      },
+    ]);
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
+  });
+
   it("retries a determinate failure that happened after dispatch began", async () => {
     const db = connection?.db;
     if (!db) {
@@ -157,7 +187,7 @@ describe("drainDestinationOutbox", () => {
     expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
   });
 
-  it("parks a determinate failure as uncertain once retries are exhausted", async () => {
+  it("retries indefinitely without exhausting the delivery", async () => {
     const db = connection?.db;
     if (!db) {
       throw new Error("db not initialized");
@@ -166,13 +196,35 @@ describe("drainDestinationOutbox", () => {
     admit(db, destinationId, 2);
     appriseOutcome = "undelivered";
 
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
       await drain(db, destinationId);
     }
 
     const rows = listDeliveryOutbox(db, destinationId);
-    expect(rows[0]?.state).toBe("uncertain");
-    expect(claimNextDelivery(db, destinationId, { now: 10_000_000 })).toBeUndefined();
+    expect(rows[0]?.state).toBe("pending");
+    expect(rows[0]?.attempts).toBe(10);
+    expect(claimNextDelivery(db, destinationId)).toBeDefined();
+  });
+
+  it("retries when the apprise process cannot be spawned", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    admit(db, destinationId, 2);
+    appriseOutcome = "spawn-error";
+
+    const stats = await drain(db, destinationId);
+
+    expect(stats.sent).toEqual([]);
+    expect(stats.errors).toHaveLength(1);
+    expect(listDeliveryOutbox(db, destinationId)[0]).toMatchObject({
+      state: "pending",
+      attempts: 1,
+      leaseExpiresAt: null,
+      claimOwner: null,
+    });
   });
 
   it("delivers admitted items in oldest-first order", async () => {

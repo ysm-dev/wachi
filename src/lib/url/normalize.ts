@@ -19,7 +19,7 @@ export const normalizeUrl = (rawUrl: string): NormalizedUrl => {
   const parsed = new URL(withProtocol);
   let normalized = parsed.toString();
 
-  if (normalized.endsWith("/")) {
+  if (parsed.pathname === "/" && !parsed.search && !parsed.hash) {
     normalized = normalized.slice(0, -1);
   }
 

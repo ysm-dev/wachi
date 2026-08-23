@@ -7,8 +7,12 @@ import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import type { PendingFailure } from "../../src/lib/check/process-subscription.ts";
 import { resolveSubscriptionFailures } from "../../src/lib/check/resolve-failures.ts";
 import { type ConnectedDb, connectDb } from "../../src/lib/db/connect.ts";
+import { resolveDestinationId } from "../../src/lib/db/delivery-ledger.ts";
+import { listDeliveryOutbox } from "../../src/lib/db/delivery-outbox.ts";
 import { getHealthState } from "../../src/lib/db/get-health-state.ts";
+import { beginHealthAttempt } from "../../src/lib/db/health-attempt.ts";
 import { resetNetworkAvailabilityStateForTest } from "../../src/lib/http/check-connectivity.ts";
+import { buildDestinationKey } from "../../src/lib/notify/destination-identity.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
 
 type MockProc = {
@@ -99,9 +103,11 @@ const makeFailure = (
   { networkLevel = false, host }: { networkLevel?: boolean; host?: string } = {},
 ): PendingFailure => {
   const error = networkLevel ? new FetchError("fetch failed") : new Error("HTTP 500");
+  const effectiveChannelUrl = `discord://1234${index % 3}/token`;
   return {
     channelName: `channel-${index % 3}`,
-    effectiveChannelUrl: `discord://1234${index % 3}/token`,
+    effectiveChannelUrl,
+    destinationId: resolveDestinationId(requireDb(), buildDestinationKey(effectiveChannelUrl)),
     subscription: {
       url: subscriptionUrl(index),
       // Default to a unique host per subscription so tests opt in to sharing one.
@@ -109,11 +115,8 @@ const makeFailure = (
     },
     error,
     networkLevel,
+    attemptGeneration: 0,
   };
-};
-
-const immediateEnqueue = async (_channelUrl: string, task: () => Promise<void>): Promise<void> => {
-  await task();
 };
 
 /**
@@ -127,17 +130,23 @@ const runResolve = async (
   attemptsByHost?: ReadonlyMap<string, number>,
 ) =>
   resolveSubscriptionFailures({
-    failures,
+    failures: failures.map((failure) => ({
+      ...failure,
+      attemptGeneration: beginHealthAttempt(
+        requireDb(),
+        failure.channelName,
+        failure.subscription.url,
+      ),
+    })),
     totalSubscriptions,
     attemptsByHost: attemptsByHost ?? new Map<string, number>(),
     db: requireDb(),
     dryRun: false,
     stats,
-    enqueueForChannel: immediateEnqueue,
   });
 
 describe("resolveSubscriptionFailures / run-level outage detection", () => {
-  it("suppresses counters and alerts when most of the run fails, no matter how many runs", async () => {
+  it("records counters and queues alerts even when most of the run fails", async () => {
     const db = requireDb();
     const stats = makeStats();
     const failures = Array.from({ length: 6 }, (_, index) => makeFailure(index));
@@ -146,16 +155,15 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
     for (let run = 0; run < 15; run++) {
       const result = await runResolve(failures, 6, stats);
       expect(result.outageSuspected).toBe(true);
-      expect(result.suppressed).toBe(6);
+      expect(result.suppressed).toBe(0);
       expect(result.total).toBe(6);
     }
 
-    expect(sentAppriseUrls).toHaveLength(0);
-
     for (const failure of failures) {
       const health = getHealthState(db, failure.channelName, failure.subscription.url);
-      expect(health.consecutiveFailures).toBe(0);
+      expect(health.consecutiveFailures).toBe(15);
     }
+    expect(listDeliveryOutbox(db)).toHaveLength(6);
 
     // Errors are still reported so the exit code and --json output stay truthful.
     expect(stats.errors).toHaveLength(6 * 15);
@@ -184,12 +192,11 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
 
     expect(result.outageSuspected).toBe(true);
     expect(sentAppriseUrls).toHaveLength(0);
-    expect(probe).not.toHaveBeenCalled();
 
     for (const failure of failures) {
       expect(
         getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
-      ).toBe(0);
+      ).toBe(1);
     }
   });
 
@@ -210,9 +217,8 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
       ).toBe(10);
     }
 
-    // One alert per subscription at the 10-failure milestone.
-    expect(sentAppriseUrls).toHaveLength(2);
-    expect(decodeURIComponent(sentAppriseUrls[0] ?? "")).toContain("discord://");
+    // One durable alert per subscription at the 10-failure milestone.
+    expect(listDeliveryOutbox(db)).toHaveLength(2);
   });
 
   it("does not suppress runs below the minimum sample size", async () => {
@@ -230,7 +236,7 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
     }
   });
 
-  it("still skips confirmed network-down failures individually on a healthy run", async () => {
+  it("records confirmed network-down failures for eventual alerting", async () => {
     globalThis.fetch = mock(() =>
       Promise.reject(new TypeError("fetch failed")),
     ) as unknown as typeof fetch;
@@ -246,12 +252,12 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
 
     expect(result.outageSuspected).toBe(false);
     expect(stats.networkSkipped).toBe(2);
-    expect(stats.errors).toHaveLength(0);
+    expect(stats.errors).toHaveLength(2);
     expect(sentAppriseUrls).toHaveLength(0);
     for (const failure of failures) {
       expect(
         getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
-      ).toBe(0);
+      ).toBe(1);
     }
   });
 
@@ -274,7 +280,7 @@ describe("resolveSubscriptionFailures / host outage detection", () => {
   const TORSS = "localhost:8677";
   const RSSHUB = "localhost:1200";
 
-  it("suppresses a dead shared backend that is a minority of the run", async () => {
+  it("records a dead shared backend while retaining outage correlation", async () => {
     const db = requireDb();
     const stats = makeStats();
 
@@ -292,19 +298,19 @@ describe("resolveSubscriptionFailures / host outage detection", () => {
       const result = await runResolve(failures, 124, stats, attempts);
       expect(result.outageSuspected).toBe(false);
       expect(result.outagedHosts).toEqual([TORSS]);
-      expect(result.suppressed).toBe(17);
+      expect(result.suppressed).toBe(0);
     }
 
-    expect(sentAppriseUrls).toHaveLength(0);
     for (const failure of failures) {
       expect(
         getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
-      ).toBe(0);
+      ).toBe(15);
     }
+    expect(listDeliveryOutbox(db)).toHaveLength(17);
     expect(stats.errors).toHaveLength(17 * 15);
   });
 
-  it("suppresses each dead host independently", async () => {
+  it("correlates each dead host without suppressing failures", async () => {
     const stats = makeStats();
     const failures = [
       ...Array.from({ length: 4 }, (_, i) => makeFailure(i, { host: TORSS })),
@@ -319,7 +325,7 @@ describe("resolveSubscriptionFailures / host outage detection", () => {
     const result = await runResolve(failures, 124, stats, attempts);
 
     expect(result.outagedHosts).toEqual([RSSHUB, TORSS]);
-    expect(result.suppressed).toBe(7);
+    expect(result.suppressed).toBe(0);
     expect(sentAppriseUrls).toHaveLength(0);
   });
 
@@ -343,7 +349,7 @@ describe("resolveSubscriptionFailures / host outage detection", () => {
     expect(
       getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
     ).toBe(10);
-    expect(sentAppriseUrls).toHaveLength(1);
+    expect(listDeliveryOutbox(db)).toHaveLength(1);
   });
 
   it("does not suppress a host with too few subscriptions to be conclusive", async () => {
@@ -382,7 +388,7 @@ describe("resolveSubscriptionFailures / host outage detection", () => {
     const result = await runResolve(failures, 124, stats, attempts);
 
     expect(result.outagedHosts).toEqual([TORSS]);
-    expect(result.suppressed).toBe(3);
+    expect(result.suppressed).toBe(0);
 
     const rsshubFailure = failures[3];
     if (!rsshubFailure) {

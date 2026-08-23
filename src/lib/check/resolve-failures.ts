@@ -1,13 +1,11 @@
 import { z } from "zod";
 import type { WachiDb } from "../db/connect.ts";
 import { isNetworkAvailable } from "../http/check-connectivity.ts";
-import { countByHost, findOutagedHosts, toRssHost } from "./detect-host-outage.ts";
+import { countByHost, findOutagedHosts } from "./detect-host-outage.ts";
 import { isRunOutageSuspected } from "./detect-run-outage.ts";
-import { handleSubscriptionFailure, toFailureMessage } from "./handle-failure.ts";
+import { handleSubscriptionFailure } from "./handle-failure.ts";
 import type { CheckStats } from "./handle-items.ts";
 import type { PendingFailure } from "./process-subscription.ts";
-
-type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const resolveFailuresOptionsSchema = z.object({
   failures: z.custom<PendingFailure[]>(),
@@ -16,7 +14,6 @@ const resolveFailuresOptionsSchema = z.object({
   db: z.custom<WachiDb>(),
   dryRun: z.boolean(),
   stats: z.custom<CheckStats>(),
-  enqueueForChannel: z.custom<QueueFn>(),
 });
 
 type ResolveFailuresOptions = z.infer<typeof resolveFailuresOptionsSchema>;
@@ -36,13 +33,8 @@ export type ResolveFailuresResult = {
  * 1. Most of the run failed -> this machine has a problem.
  * 2. Every subscription behind one host failed -> that host has a problem.
  *
- * In both cases the failures are recorded in the run summary but neither the
- * health counters nor the failure alerts are touched. One dead process must not
- * be able to burn down every dependent subscription's streak and fan alerts out
- * to every channel.
- *
- * Anything left over is handled individually, preserving the original behaviour
- * including the confirmed-network-down skip.
+ * Correlation is retained for the run summary, but every failure is recorded.
+ * Missing an alert is worse than sending several alerts for one shared outage.
  */
 export const resolveSubscriptionFailures = async ({
   failures,
@@ -51,7 +43,6 @@ export const resolveSubscriptionFailures = async ({
   db,
   dryRun,
   stats,
-  enqueueForChannel,
 }: ResolveFailuresOptions): Promise<ResolveFailuresResult> => {
   const clean: ResolveFailuresResult = {
     outageSuspected: false,
@@ -64,51 +55,42 @@ export const resolveSubscriptionFailures = async ({
     return clean;
   }
 
-  // Errors are still reported so the exit code and --json output stay truthful.
-  // Only the durable failure counter and the notification are suppressed.
-  const suppress = (failure: PendingFailure): void => {
-    stats.errors.push(`${failure.subscription.url}: ${toFailureMessage(failure.error)}`);
-  };
-
-  if (isRunOutageSuspected({ totalSubscriptions, failureCount: failures.length })) {
-    for (const failure of failures) {
-      suppress(failure);
-    }
-
-    return { ...clean, outageSuspected: true, suppressed: failures.length };
-  }
+  const outageSuspected = isRunOutageSuspected({
+    totalSubscriptions,
+    failureCount: failures.length,
+  });
 
   const outagedHosts = findOutagedHosts({
     attemptsByHost,
     failuresByHost: countByHost(failures.map((failure) => failure.subscription.rss_url)),
   });
 
-  let suppressed = 0;
+  let networkAvailable: boolean | undefined;
 
   for (const failure of failures) {
-    const host = toRssHost(failure.subscription.rss_url);
-    if (host && outagedHosts.has(host)) {
-      suppress(failure);
-      suppressed += 1;
-      continue;
-    }
-
-    if (failure.networkLevel && !(await isNetworkAvailable())) {
-      stats.networkSkipped += 1;
-      continue;
+    if (failure.networkLevel) {
+      networkAvailable ??= await isNetworkAvailable();
+      if (!networkAvailable) {
+        stats.networkSkipped += 1;
+      }
     }
 
     await handleSubscriptionFailure({
       channelName: failure.channelName,
-      effectiveChannelUrl: failure.effectiveChannelUrl,
+      destinationId: failure.destinationId,
       subscription: failure.subscription,
       db,
       dryRun,
       stats,
-      enqueueForChannel,
       error: failure.error,
+      attemptGeneration: failure.attemptGeneration,
     });
   }
 
-  return { ...clean, outagedHosts: [...outagedHosts].sort(), suppressed };
+  return {
+    ...clean,
+    outageSuspected,
+    outagedHosts: [...outagedHosts].sort(),
+    suppressed: 0,
+  };
 };

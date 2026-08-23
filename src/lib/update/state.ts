@@ -13,6 +13,7 @@ const updateStateSchema = z.object({
       version: z.string(),
       assetName: z.string(),
       targetPath: z.string(),
+      digest: z.string().regex(/^sha256:[a-f\d]{64}$/i),
     })
     .optional(),
 });

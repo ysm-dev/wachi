@@ -58,8 +58,8 @@ await applyPendingAutoUpdate().catch(() => {
   return;
 });
 
+await runMain(main);
+
 await stageAutoUpdateIfNeeded().catch(() => {
   return;
 });
-
-await runMain(main);

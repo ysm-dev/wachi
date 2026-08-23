@@ -20,10 +20,12 @@ describe("prepareRssFromDetectedFeed", () => {
 
     expect(prepared.subscriptionType).toBe("rss");
     expect(prepared.subscription).toEqual({
-      url: "https://example.com/blog",
+      url: "https://example.com/blog/",
       rss_url: "https://example.com/feed.xml",
     });
-    expect(prepared.baselineItems).toEqual([{ title: "Post", link: "https://example.com/post" }]);
+    expect(prepared.baselineItems).toEqual([
+      { title: "Post", link: "https://example.com/post", publishedAt: null },
+    ]);
   });
 
   it("falls back to RSS URL when feed channel link is missing", async () => {

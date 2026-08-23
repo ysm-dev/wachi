@@ -16,6 +16,27 @@ describe("config schema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("rejects malformed apprise URLs", () => {
+    const parsed = userConfigSchema.safeParse({
+      channels: [{ name: "main", apprise_url: "not-a-url", subscriptions: [] }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects unknown fields instead of silently deleting configuration", () => {
+    const parsed = userConfigSchema.safeParse({
+      channels: [
+        {
+          name: "main",
+          apprise_url: "slack://token/channel",
+          subscription: [{ url: "https://example.com", rss_url: "https://example.com/feed.xml" }],
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("rejects duplicate channel names case-insensitively", () => {
     const parsed = userConfigSchema.safeParse({
       channels: [

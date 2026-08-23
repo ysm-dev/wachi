@@ -21,6 +21,7 @@ const checkRssOptionsSchema = z.object({
   stats: z.custom<CheckStats>(),
   linkTransforms: z.custom<LinkTransform[]>(),
   cutoverComplete: z.boolean(),
+  attemptGeneration: z.number().int().nonnegative(),
   fetchItems: z.custom<() => Promise<FetchRssItemsResult>>(),
 });
 
@@ -38,13 +39,17 @@ export const checkRssSubscription = async ({
   stats,
   linkTransforms,
   cutoverComplete,
+  attemptGeneration,
   fetchItems,
 }: CheckRssOptions): Promise<void> => {
   const validatorScope = `destination:${destinationId}`;
   const fetched = await fetchItems();
 
   if (fetched.notModified) {
-    markHealthSuccess(db, channelName, subscription.url);
+    if (!dryRun) {
+      persistRssValidators(db, subscription.rss_url, fetched.validators, validatorScope, false);
+      markHealthSuccess(db, channelName, subscription.url, attemptGeneration);
+    }
     return;
   }
 
@@ -55,7 +60,9 @@ export const checkRssSubscription = async ({
     subscriptionUrl: subscription.url,
     db,
     dryRun,
-    baseline: !cutoverComplete,
+    // A missing cutover marker must never suppress current items. Existing
+    // delivery keys still prevent duplicates after legacy backfill.
+    baseline: false,
     isJson,
     isVerbose,
     stats,
@@ -71,5 +78,7 @@ export const checkRssSubscription = async ({
     }
   }
 
-  markHealthSuccess(db, channelName, subscription.url);
+  if (!dryRun) {
+    markHealthSuccess(db, channelName, subscription.url, attemptGeneration);
+  }
 };

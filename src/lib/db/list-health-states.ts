@@ -1,10 +1,11 @@
+import { gt } from "drizzle-orm";
 import type { WachiDb } from "./connect.ts";
 import type { HealthState } from "./get-health-state.ts";
 import { health } from "./schema.ts";
 import { healthListSchema, healthSelectSchema } from "./zod.ts";
 
 export const listHealthStates = (db: WachiDb): HealthState[] => {
-  const rows = db.select().from(health).all();
+  const rows = db.select().from(health).where(gt(health.consecutiveFailures, 0)).all();
   const parsed = healthListSchema.safeParse(rows);
 
   if (parsed.success) {

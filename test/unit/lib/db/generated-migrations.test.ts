@@ -25,7 +25,7 @@ describe("generated migrations", () => {
   it("contains executable SQL statements", () => {
     for (const migration of generatedMigrations) {
       expect(migration.sql.length).toBeGreaterThan(0);
-      expect(/create\s+(table|index)/i.test(migration.sql)).toBe(true);
+      expect(/(?:create\s+(?:table|index)|alter\s+table)/i.test(migration.sql)).toBe(true);
     }
   });
 });

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { mutateConfig } from "../../../../src/lib/config/mutate.ts";
 import { readConfig } from "../../../../src/lib/config/read.ts";
 import { writeConfig } from "../../../../src/lib/config/write.ts";
 import { WachiError } from "../../../../src/utils/error.ts";
@@ -21,6 +22,7 @@ const envSnapshot = {
 beforeEach(async () => {
   pathsRoot = await mkdtemp(join(tmpdir(), "wachi-path-root-"));
   process.env.WACHI_PATHS_ROOT = pathsRoot;
+  delete process.env.WACHI_CONFIG_PATH;
   tempDirs.push(pathsRoot);
 });
 
@@ -58,8 +60,16 @@ const withIsolatedDefaultConfigFiles = async (
 };
 
 afterEach(async () => {
-  process.env.WACHI_CONFIG_PATH = envSnapshot.WACHI_CONFIG_PATH;
-  process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
+  if (envSnapshot.WACHI_CONFIG_PATH === undefined) {
+    delete process.env.WACHI_CONFIG_PATH;
+  } else {
+    process.env.WACHI_CONFIG_PATH = envSnapshot.WACHI_CONFIG_PATH;
+  }
+  if (envSnapshot.WACHI_PATHS_ROOT === undefined) {
+    delete process.env.WACHI_PATHS_ROOT;
+  } else {
+    process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
+  }
   pathsRoot = "";
   for (const dir of tempDirs.splice(0, tempDirs.length)) {
     await rm(dir, { recursive: true, force: true });
@@ -238,6 +248,46 @@ describe("config read/write", () => {
     await expect(readConfig(configPath)).rejects.toBeInstanceOf(WachiError);
   });
 
+  it("rejects YAML parser errors", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-badyaml-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    await writeFile(configPath, "channels:\n  - name: [unterminated\n", "utf8");
+
+    await expect(readConfig(configPath)).rejects.toBeInstanceOf(WachiError);
+  });
+
+  it("rejects malformed persisted apprise URLs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-bad-apprise-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    await writeFile(
+      configPath,
+      "channels:\n  - name: broken\n    apprise_url: not-an-apprise-url\n    subscriptions: []\n",
+      "utf8",
+    );
+
+    await expect(readConfig(configPath)).rejects.toBeInstanceOf(WachiError);
+  });
+
+  it("lets an explicit path override WACHI_CONFIG_PATH", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-env-config-"));
+    tempDirs.push(dir);
+    const envPath = join(dir, "from-env.yml");
+    const explicitPath = join(dir, "from-flag.yml");
+    await writeFile(
+      explicitPath,
+      "channels:\n  - name: explicit\n    apprise_url: slack://x/y\n    subscriptions: []\n",
+      "utf8",
+    );
+    process.env.WACHI_CONFIG_PATH = envPath;
+
+    const read = await readConfig(explicitPath);
+    expect(read.path).toBe(explicitPath);
+    expect(read.exists).toBe(true);
+    expect(read.config.channels[0]?.name).toBe("explicit");
+  });
+
   it("throws WachiError for malformed json", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wachi-test-badjson-"));
     tempDirs.push(dir);
@@ -300,6 +350,70 @@ describe("config read/write", () => {
         },
       }),
     ).rejects.toBeInstanceOf(WachiError);
+  });
+
+  it("serializes concurrent config mutations without losing updates", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-mutations-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+
+    await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        mutateConfig(configPath, (config) => {
+          config.link_transforms ??= [];
+          config.link_transforms.push({ from: `from-${index}`, to: `to-${index}` });
+          return { config, result: undefined };
+        }),
+      ),
+    );
+
+    const read = await readConfig(configPath);
+    expect(read.config.link_transforms).toHaveLength(12);
+  });
+
+  it("recovers a config lock left by a dead process", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-dead-lock-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    await writeFile(`${configPath}.lock`, JSON.stringify({ pid: 2_147_483_647 }), "utf8");
+    const reapPath = `${configPath}.lock.reap`;
+    await writeFile(reapPath, "", "utf8");
+    const staleTime = new Date(Date.now() - 20_000);
+    await utimes(reapPath, staleTime, staleTime);
+
+    await mutateConfig(configPath, (config) => {
+      config.channels = [];
+      return { config, result: undefined };
+    });
+
+    await expect(readConfig(configPath)).resolves.toMatchObject({ exists: true });
+  });
+
+  it("recovers an incomplete stale config lock", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-stale-lock-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const lockPath = `${configPath}.lock`;
+    await writeFile(lockPath, "", "utf8");
+    const staleTime = new Date(Date.now() - 5_000);
+    await utimes(lockPath, staleTime, staleTime);
+
+    await mutateConfig(configPath, (config) => ({ config, result: undefined }));
+
+    await expect(readConfig(configPath)).resolves.toMatchObject({ exists: true });
+  });
+
+  it("uses unique temporary files for concurrent writes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-test-writes-"));
+    tempDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+
+    await Promise.all([
+      writeConfig({ path: configPath, format: "yaml", config: { link_transforms: [] } }),
+      writeConfig({ path: configPath, format: "yaml", config: { channels: [] } }),
+    ]);
+
+    await expect(readConfig(configPath)).resolves.toMatchObject({ exists: true });
   });
 
   it("wraps filesystem write errors", async () => {

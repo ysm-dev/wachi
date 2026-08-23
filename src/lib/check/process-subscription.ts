@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { LinkTransform, SubscriptionConfig } from "../config/schema.ts";
 import type { WachiDb } from "../db/connect.ts";
+import { beginHealthAttempt } from "../db/health-attempt.ts";
 import { isNetworkLevelError } from "../http/check-connectivity.ts";
 import type { FetchRssItemsResult } from "../subscriptions/fetch-rss-subscription-items.ts";
 import { checkRssSubscription } from "./check-rss.ts";
@@ -16,9 +17,11 @@ import type { CheckStats } from "./handle-items.ts";
 export type PendingFailure = {
   channelName: string;
   effectiveChannelUrl: string;
+  destinationId: number;
   subscription: SubscriptionConfig;
   error: unknown;
   networkLevel: boolean;
+  attemptGeneration: number;
 };
 
 const processSubscriptionOptionsSchema = z.object({
@@ -54,6 +57,7 @@ export const processSubscriptionCheck = async ({
   cutoverComplete,
   fetchItems,
 }: ProcessSubscriptionOptions): Promise<void> => {
+  const attemptGeneration = dryRun ? 0 : beginHealthAttempt(db, channelName, subscription.url);
   try {
     await checkRssSubscription({
       channelName,
@@ -67,6 +71,7 @@ export const processSubscriptionCheck = async ({
       stats,
       linkTransforms,
       cutoverComplete,
+      attemptGeneration,
       fetchItems,
     });
   } catch (error) {
@@ -77,9 +82,11 @@ export const processSubscriptionCheck = async ({
     failures.push({
       channelName,
       effectiveChannelUrl,
+      destinationId,
       subscription,
       error,
       networkLevel: isNetworkLevelError(error),
+      attemptGeneration,
     });
   }
 };

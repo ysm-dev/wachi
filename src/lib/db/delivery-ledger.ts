@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import type { WachiDb } from "./connect.ts";
+import type { WachiDb, WachiDbSession } from "./connect.ts";
 import { deliveryKeys, deliveryOutbox, destinations } from "./schema.ts";
 
 export type DatabaseKey = Buffer | Uint8Array;
@@ -11,6 +11,11 @@ export type DeliveryAdmission = {
   source: string;
   link: string;
   availableAt?: number;
+};
+
+type NormalizedDeliveryAdmission = Omit<DeliveryAdmission, "linkKey" | "availableAt"> & {
+  linkKey: Buffer;
+  availableAt: number;
 };
 
 // Process-monotonic admission sequence. Seeded from the wall clock so ordering
@@ -128,6 +133,48 @@ export const admitDeliveryWithOutbox = (db: WachiDb, admission: DeliveryAdmissio
   return admitDeliveriesWithOutbox(db, [admission])[0] ?? false;
 };
 
+const normalizeAdmission = (admission: DeliveryAdmission): NormalizedDeliveryAdmission => {
+  validateDestinationId(admission.destinationId);
+  const availableAt = admission.availableAt ?? Date.now();
+  if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
+    throw new RangeError("availableAt must be a non-negative integer");
+  }
+  return {
+    ...admission,
+    linkKey: normalizeDatabaseKey(admission.linkKey, "linkKey"),
+    availableAt,
+  };
+};
+
+export const admitDeliveryWithOutboxInTransaction = (
+  db: WachiDbSession,
+  admission: DeliveryAdmission,
+): boolean => {
+  const normalized = normalizeAdmission(admission);
+  const inserted = db
+    .insert(deliveryKeys)
+    .values({ destinationId: normalized.destinationId, linkKey: normalized.linkKey })
+    .onConflictDoNothing()
+    .returning({ destinationId: deliveryKeys.destinationId })
+    .get();
+  if (!inserted) {
+    return false;
+  }
+
+  db.insert(deliveryOutbox)
+    .values({
+      destinationId: normalized.destinationId,
+      linkKey: normalized.linkKey,
+      payload: normalized.payload,
+      source: normalized.source,
+      link: normalized.link,
+      enqueuedSeq: nextOutboxSequence(),
+      availableAt: normalized.availableAt,
+    })
+    .run();
+  return true;
+};
+
 export const admitDeliveriesWithOutbox = (
   db: WachiDb,
   admissions: DeliveryAdmission[],
@@ -136,46 +183,13 @@ export const admitDeliveriesWithOutbox = (
     return [];
   }
 
-  const normalizedAdmissions = admissions.map((admission) => {
-    validateDestinationId(admission.destinationId);
-    const availableAt = admission.availableAt ?? Date.now();
-    if (!Number.isSafeInteger(availableAt) || availableAt < 0) {
-      throw new RangeError("availableAt must be a non-negative integer");
-    }
-    return {
-      ...admission,
-      linkKey: normalizeDatabaseKey(admission.linkKey, "linkKey"),
-      availableAt,
-    };
-  });
+  const normalizedAdmissions = admissions.map(normalizeAdmission);
 
   return db.transaction(
     (tx) => {
       const results: boolean[] = [];
       for (const admission of normalizedAdmissions) {
-        const inserted = tx
-          .insert(deliveryKeys)
-          .values({ destinationId: admission.destinationId, linkKey: admission.linkKey })
-          .onConflictDoNothing()
-          .returning({ destinationId: deliveryKeys.destinationId })
-          .get();
-        if (!inserted) {
-          results.push(false);
-          continue;
-        }
-
-        tx.insert(deliveryOutbox)
-          .values({
-            destinationId: admission.destinationId,
-            linkKey: admission.linkKey,
-            payload: admission.payload,
-            source: admission.source,
-            link: admission.link,
-            enqueuedSeq: nextOutboxSequence(),
-            availableAt: admission.availableAt,
-          })
-          .run();
-        results.push(true);
+        results.push(admitDeliveryWithOutboxInTransaction(tx, admission));
       }
       return results;
     },

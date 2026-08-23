@@ -24,6 +24,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          test "$TAG_VERSION" = "$PACKAGE_VERSION"
+
       - name: Verify generated DB migration manifest
         run: |
           bun run db:sync-migrations
@@ -141,6 +148,18 @@ jobs:
         with:
           path: dist
 
+      - name: Generate release checksums
+        run: |
+          for FILE in \
+            dist/wachi-darwin-arm64/wachi-darwin-arm64 \
+            dist/wachi-darwin-x64/wachi-darwin-x64 \
+            dist/wachi-linux-arm64/wachi-linux-arm64 \
+            dist/wachi-linux-x64/wachi-linux-x64 \
+            dist/wachi-win32-x64.exe/wachi-win32-x64.exe
+          do
+            sha256sum "$FILE" | cut -d ' ' -f 1 > "$FILE.sha256"
+          done
+
       - name: Place binaries into platform packages
         run: |
           cp dist/wachi-darwin-arm64/wachi-darwin-arm64 packages/darwin-arm64/bin/wachi
@@ -198,25 +217,52 @@ jobs:
       # npmjs.com pointing at this repository and workflow.
       - name: Publish platform packages
         run: |
-          npm publish --access public ./packages/darwin-arm64
-          npm publish --access public ./packages/darwin-x64
-          npm publish --access public ./packages/linux-arm64
-          npm publish --access public ./packages/linux-x64
-          npm publish --access public ./packages/win32-x64
+          publish_if_missing() {
+            package_dir="$1"
+            package_name=$(node -p "require('./${package_dir}/package.json').name")
+            package_version=$(node -p "require('./${package_dir}/package.json').version")
+            if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+              echo "${package_name}@${package_version} is already published"
+            else
+              npm publish --access public "./${package_dir}"
+            fi
+          }
+
+          publish_if_missing packages/darwin-arm64
+          publish_if_missing packages/darwin-x64
+          publish_if_missing packages/linux-arm64
+          publish_if_missing packages/linux-x64
+          publish_if_missing packages/win32-x64
 
       - name: Publish main package
-        run: npm publish --access public
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published"
+          else
+            npm publish --access public
+          fi
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          gh release create "v$VERSION" \
+          if ! gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --notes "Automated release for v$VERSION"
+          fi
+          gh release upload "v$VERSION" \
             dist/wachi-darwin-arm64/wachi-darwin-arm64 \
             dist/wachi-darwin-x64/wachi-darwin-x64 \
             dist/wachi-linux-arm64/wachi-linux-arm64 \
             dist/wachi-linux-x64/wachi-linux-x64 \
             dist/wachi-win32-x64.exe/wachi-win32-x64.exe \
-            --title "v$VERSION" \
-            --notes "Automated release for v$VERSION"
+            dist/wachi-darwin-arm64/wachi-darwin-arm64.sha256 \
+            dist/wachi-darwin-x64/wachi-darwin-x64.sha256 \
+            dist/wachi-linux-arm64/wachi-linux-arm64.sha256 \
+            dist/wachi-linux-x64/wachi-linux-x64.sha256 \
+            dist/wachi-win32-x64.exe/wachi-win32-x64.exe.sha256 \
+            --clobber

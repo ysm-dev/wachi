@@ -5,7 +5,7 @@ export const deliverySourceSchema = z.object({
   channelName: z.string(),
   subscriptionUrl: z.string(),
   title: z.string(),
-  archiveLink: z.string(),
+  archiveLink: z.string().nullable(),
   sourceIdentity: sourceIdentitySchema.optional(),
 });
 

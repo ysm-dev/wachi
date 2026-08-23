@@ -10,6 +10,7 @@ const releaseSchema = z.object({
     z.object({
       name: z.string(),
       browser_download_url: z.string().url(),
+      digest: z.string().nullable().optional(),
     }),
   ),
 });
@@ -40,7 +41,7 @@ export const fetchLatestRelease = async (
   fetchFn: typeof fetch = globalThis.fetch,
   platform: NodeJS.Platform = process.platform,
   arch = process.arch,
-): Promise<{ version: string; assetName: string; downloadUrl: string }> => {
+): Promise<{ version: string; assetName: string; downloadUrl: string; digest?: string }> => {
   const assetName = resolveAssetName(platform, arch);
   const response = await fetchFn(RELEASE_API_URL, {
     headers: {
@@ -80,5 +81,6 @@ export const fetchLatestRelease = async (
     version: parsed.data.tag_name.replace(/^v/, ""),
     assetName,
     downloadUrl: asset.browser_download_url,
+    digest: asset.digest ?? undefined,
   };
 };

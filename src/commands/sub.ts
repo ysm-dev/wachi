@@ -6,20 +6,17 @@ import { drainDestinationOutbox } from "../lib/check/drain-outbox.ts";
 import { type CheckStats, handleSubscriptionItems } from "../lib/check/handle-items.ts";
 import { printJsonSuccess, printStderr, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
+import { mutateConfig } from "../lib/config/mutate.ts";
 import { readConfig } from "../lib/config/read.ts";
 import type { SubscriptionConfig } from "../lib/config/schema.ts";
-import { writeConfig } from "../lib/config/write.ts";
 import { connectDb } from "../lib/db/connect.ts";
 import { resolveDestinationId } from "../lib/db/delivery-ledger.ts";
 import { buildDestinationKey } from "../lib/notify/destination-identity.ts";
 import { prepareSubscription } from "../lib/subscriptions/prepare-subscription.ts";
-import {
-  resolveSourceIdentity,
-  withLinkFallbackAvatar,
-} from "../lib/subscriptions/resolve-source-identity.ts";
+import { resolveSourceIdentity } from "../lib/subscriptions/resolve-source-identity.ts";
 import { canonicalizeFeedUrl } from "../lib/url/canonicalize-item-url.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
-import { validateAppriseUrl, validateReachableUrl } from "../lib/url/validate.ts";
+import { validateAppriseUrl } from "../lib/url/validate.ts";
 import { getEnv } from "../utils/env.ts";
 import { WachiError } from "../utils/error.ts";
 import {
@@ -51,6 +48,12 @@ const findExistingSubscription = (
     }
     return subscription.rss_url === normalizedUrl;
   });
+};
+
+type SubMutationResult = {
+  duplicate: SubscriptionConfig | undefined;
+  channelIdentity: string;
+  channelAppriseUrl: string;
 };
 
 export const subCommand = defineCommand({
@@ -137,10 +140,6 @@ export const subCommand = defineCommand({
           `Run: wachi sub -n "${channelName}" -a "<apprise-url>" "${normalized.url}"`,
         );
       }
-      const effectiveChannelUrl = getEnv().appriseUrlOverride ?? channelAppriseUrl;
-
-      await validateReachableUrl(normalized.url);
-
       const existingSubscription = findExistingSubscription(existingChannel, normalized.url);
 
       if (existingSubscription) {
@@ -178,31 +177,99 @@ export const subCommand = defineCommand({
         return 0;
       }
 
-      const nextRawConfig = structuredClone(configState.rawConfig);
-      if (!nextRawConfig.channels) {
-        nextRawConfig.channels = [];
-      }
+      const mutation = await mutateConfig<SubMutationResult>(parsedArgs.config, (nextRawConfig) => {
+        if (!nextRawConfig.channels) {
+          nextRawConfig.channels = [];
+        }
 
-      const targetChannel = nextRawConfig.channels.find(
-        (channel) => toChannelNameKey(channel.name) === channelNameKey,
-      );
-      if (targetChannel) {
-        targetChannel.subscriptions.push(prepared.subscription);
-      } else {
-        nextRawConfig.channels.push({
-          name: channelIdentity,
-          apprise_url: channelAppriseUrl,
-          subscriptions: [prepared.subscription],
-        });
-      }
+        const targetChannel = nextRawConfig.channels.find(
+          (channel) => toChannelNameKey(channel.name) === channelNameKey,
+        );
+        if (!targetChannel && !providedAppriseUrl) {
+          throw new WachiError(
+            `Channel not found: ${channelName}`,
+            `No channel named ${channelName} exists yet in config.`,
+            `Create it on first subscribe with: wachi sub -n "${channelName}" -a "<apprise-url>" "${normalized.url}"`,
+          );
+        }
+        if (targetChannel && providedAppriseUrl) {
+          const saved = buildDestinationKey(targetChannel.apprise_url);
+          const provided = buildDestinationKey(providedAppriseUrl);
+          if (!saved.equals(provided)) {
+            throw new WachiError(
+              `Channel ${targetChannel.name} already exists with a different apprise URL`,
+              "The provided --apprise-url does not match the saved channel destination.",
+              "Use the existing channel without --apprise-url, or choose a new channel name.",
+            );
+          }
+        }
 
-      await writeConfig({
-        config: nextRawConfig,
-        path: configState.path,
-        format: configState.format,
+        const latestIdentity = targetChannel?.name ?? channelName;
+        const latestAppriseUrl = targetChannel?.apprise_url ?? providedAppriseUrl;
+        if (!latestAppriseUrl) {
+          throw new WachiError(
+            `Channel not found: ${channelName}`,
+            "An apprise URL is required when creating a new channel.",
+            `Run: wachi sub -n "${channelName}" -a "<apprise-url>" "${normalized.url}"`,
+          );
+        }
+
+        const duplicate =
+          findExistingSubscription(targetChannel, normalized.url) ??
+          targetChannel?.subscriptions.find((subscription) => {
+            return canonicalizeFeedUrl(subscription.rss_url) === preparedRssUrl;
+          });
+        if (duplicate) {
+          return {
+            result: {
+              duplicate,
+              channelIdentity: latestIdentity,
+              channelAppriseUrl: latestAppriseUrl,
+            },
+          };
+        }
+
+        if (targetChannel) {
+          targetChannel.subscriptions.push(prepared.subscription);
+        } else {
+          nextRawConfig.channels.push({
+            name: latestIdentity,
+            apprise_url: latestAppriseUrl,
+            subscriptions: [prepared.subscription],
+          });
+        }
+
+        return {
+          config: nextRawConfig,
+          result: {
+            duplicate: undefined,
+            channelIdentity: latestIdentity,
+            channelAppriseUrl: latestAppriseUrl,
+          },
+        };
       });
-      if (!configState.exists) {
-        printStderr(`Created config: ${configState.path}`);
+      const latestChannelIdentity = mutation.result.channelIdentity;
+      const effectiveChannelUrl = getEnv().appriseUrlOverride ?? mutation.result.channelAppriseUrl;
+
+      if (mutation.result.duplicate) {
+        if (isJson) {
+          printJsonSuccess({
+            channel: latestChannelIdentity,
+            type: "rss",
+            url: mutation.result.duplicate.url,
+            rss_url: mutation.result.duplicate.rss_url,
+            baseline_count: 0,
+          });
+        } else {
+          printStdout(
+            `Already subscribed: ${mutation.result.duplicate.url} -> ${latestChannelIdentity}`,
+          );
+        }
+        return 0;
+      }
+
+      if (!mutation.configState.exists) {
+        printStderr(`Created config: ${mutation.configState.path}`);
       }
 
       const { sqlite, db } = await connectDb();
@@ -216,10 +283,14 @@ export const subCommand = defineCommand({
             subscriptionUrl: prepared.subscription.url,
             rssUrl: prepared.subscription.rss_url,
           });
-          const olderItems = prepared.baselineItems.slice(0, -1);
+          const publishedDates = prepared.baselineItems.map((item) => item.publishedAt);
+          const latestIsUnambiguous =
+            publishedDates.every((date): date is string => date !== null) &&
+            new Set(publishedDates).size === publishedDates.length;
+          const olderItems = latestIsUnambiguous ? prepared.baselineItems.slice(0, -1) : [];
           baselineCount += await handleSubscriptionItems({
             items: olderItems,
-            channelName: channelIdentity,
+            channelName: latestChannelIdentity,
             destinationId,
             subscriptionUrl: prepared.subscription.url,
             db,
@@ -229,15 +300,17 @@ export const subCommand = defineCommand({
             isVerbose,
             stats,
             sourceIdentity: baseIdentity,
-            linkTransforms: configState.config.link_transforms,
+            linkTransforms: mutation.configState.config.link_transforms,
             appriseUrl: effectiveChannelUrl,
           });
 
-          const latestItem = prepared.baselineItems.at(-1);
-          if (latestItem) {
+          const itemsToNotify = latestIsUnambiguous
+            ? prepared.baselineItems.slice(-1)
+            : prepared.baselineItems;
+          if (itemsToNotify.length > 0) {
             baselineCount += await handleSubscriptionItems({
-              items: [latestItem],
-              channelName: channelIdentity,
+              items: itemsToNotify,
+              channelName: latestChannelIdentity,
               destinationId,
               subscriptionUrl: prepared.subscription.url,
               db,
@@ -246,8 +319,8 @@ export const subCommand = defineCommand({
               isJson,
               isVerbose,
               stats,
-              sourceIdentity: withLinkFallbackAvatar(baseIdentity, latestItem.link),
-              linkTransforms: configState.config.link_transforms,
+              sourceIdentity: baseIdentity,
+              linkTransforms: mutation.configState.config.link_transforms,
               appriseUrl: effectiveChannelUrl,
             });
             await drainDestinationOutbox({
@@ -272,14 +345,14 @@ export const subCommand = defineCommand({
 
       if (isJson) {
         printJsonSuccess({
-          channel: channelIdentity,
+          channel: latestChannelIdentity,
           type: prepared.subscriptionType,
           url: prepared.subscription.url,
           rss_url: prepared.subscription.rss_url,
           baseline_count: sendExisting ? 0 : baselineCount,
         });
       } else {
-        printStdout(`Channel: ${channelIdentity}`);
+        printStdout(`Channel: ${latestChannelIdentity}`);
         printStdout(`Subscribed (RSS): ${prepared.subscription.url}`);
         printStdout(`Feed: ${prepared.subscription.rss_url}`);
         printStdout(`Baseline: ${sendExisting ? 0 : baselineCount} items seeded`);

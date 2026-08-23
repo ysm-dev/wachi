@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { WachiError } from "../../utils/error.ts";
 import type { WachiDb } from "../db/connect.ts";
+import { deleteMetaValue } from "../db/delete-meta-value.ts";
 import { getMetaValue } from "../db/get-meta-value.ts";
 import { setMetaValue } from "../db/set-meta-value.ts";
-import { http } from "../http/client.ts";
+import { fetchBoundedText } from "../http/client.ts";
 import { waitForDomainRateLimit } from "../http/rate-limit.ts";
 import type { SourceIdentity } from "../notify/source-identity.ts";
 import { parseRssFeed } from "../rss/parse.ts";
@@ -15,6 +16,7 @@ import { subscriptionItemSchema } from "./subscription-item.ts";
 const RSS_FETCH_TIMEOUT_MS = 5_000;
 const RSS_FETCH_RETRY_COUNT = 1;
 const RSS_FETCH_RETRY_DELAY_MS = 250;
+const RSS_FETCH_MAX_BYTES = 5 * 1024 * 1024;
 
 const fetchRssItemsOptionsSchema = z.object({
   subscriptionUrl: z.string(),
@@ -46,6 +48,7 @@ export type FetchRssItemsResult = z.infer<typeof fetchRssItemsResultSchema>;
 export type FetchedRssDocument = {
   notModified: boolean;
   items: FetchRssItemsResult["items"];
+  feedUrl: string;
   feedTitle: string | null;
   feedImageUrl: string | null;
   validators: RssValidators;
@@ -79,12 +82,17 @@ export const persistRssValidators = (
   rssUrl: string,
   validators: RssValidators,
   validatorScope?: string,
+  clearMissing = true,
 ): void => {
   if (validators.etag) {
     setMetaValue(db, etagMetaKey(rssUrl, validatorScope), validators.etag);
+  } else if (clearMissing) {
+    deleteMetaValue(db, etagMetaKey(rssUrl, validatorScope));
   }
   if (validators.lastModified) {
     setMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope), validators.lastModified);
+  } else if (clearMissing) {
+    deleteMetaValue(db, lastModifiedMetaKey(rssUrl, validatorScope));
   }
 };
 
@@ -158,13 +166,12 @@ export const fetchRssDocument = async ({
     headers["If-Modified-Since"] = requestValidators.lastModified;
   }
 
-  const response = await http.raw(rssUrl, {
-    responseType: "text",
+  const response = await fetchBoundedText(rssUrl, {
     headers,
-    ignoreResponseError: true,
-    timeout: RSS_FETCH_TIMEOUT_MS,
+    timeoutMs: RSS_FETCH_TIMEOUT_MS,
+    maxBytes: RSS_FETCH_MAX_BYTES,
     retry: RSS_FETCH_RETRY_COUNT,
-    retryDelay: RSS_FETCH_RETRY_DELAY_MS,
+    retryDelayMs: RSS_FETCH_RETRY_DELAY_MS,
   });
 
   if (response.status === 304) {
@@ -178,6 +185,7 @@ export const fetchRssDocument = async ({
     return {
       notModified: true,
       items: [],
+      feedUrl: response.url,
       feedTitle: null,
       feedImageUrl: null,
       validators: {
@@ -195,15 +203,15 @@ export const fetchRssDocument = async ({
     );
   }
 
-  const xml = typeof response._data === "string" ? response._data : "";
-  const parsed = await parseRssFeed(xml, rssUrl);
+  const parsed = await parseRssFeed(response.body, response.url);
   return {
     notModified: false,
-    items: parsed.items.map((item) => ({
-      title: item.title,
-      link: canonicalizeItemUrl(item.link, rssUrl) ?? item.link,
-      publishedAt: item.publishedAt,
-    })),
+    feedUrl: response.url,
+    items: parsed.items.flatMap((item) => {
+      const link = canonicalizeItemUrl(item.link, response.url);
+      const parsedItem = subscriptionItemSchema.safeParse({ ...item, link });
+      return parsedItem.success ? [parsedItem.data] : [];
+    }),
     feedTitle: parsed.title,
     feedImageUrl: parsed.imageUrl,
     validators: {
@@ -233,7 +241,7 @@ export const fetchRssSubscriptionItems = async ({
 
   const sourceIdentity = await resolveRssSourceIdentity({
     subscriptionUrl,
-    rssUrl,
+    rssUrl: document.feedUrl,
     feedTitle: document.feedTitle,
     feedImageUrl: document.feedImageUrl,
     db,

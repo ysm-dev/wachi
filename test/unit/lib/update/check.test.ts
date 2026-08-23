@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,6 +57,7 @@ afterEach(async () => {
 describe("stageAutoUpdateIfNeeded", () => {
   it("downloads and records a newer standalone update", async () => {
     let calls = 0;
+    const digest = createHash("sha256").update("new-binary").digest("hex");
     const fetchMock = (async (input: string | URL | Request) => {
       calls += 1;
       const url = String(input);
@@ -67,6 +69,7 @@ describe("stageAutoUpdateIfNeeded", () => {
               {
                 name: releaseAssetName,
                 browser_download_url: `https://example.com/${releaseAssetName}`,
+                digest: `sha256:${digest}`,
               },
             ],
           }),
@@ -87,6 +90,7 @@ describe("stageAutoUpdateIfNeeded", () => {
       version: "9.9.9",
       assetName: releaseAssetName,
       targetPath: process.execPath,
+      digest: `sha256:${digest}`,
     });
   });
 
@@ -106,6 +110,7 @@ describe("stageAutoUpdateIfNeeded", () => {
                 {
                   name: releaseAssetName,
                   browser_download_url: `https://example.com/${releaseAssetName}`,
+                  digest: `sha256:${createHash("sha256").update("new-binary").digest("hex")}`,
                 },
               ],
             }),
@@ -121,6 +126,42 @@ describe("stageAutoUpdateIfNeeded", () => {
     await expect(
       stageAutoUpdateIfNeeded(fetchMock, Date.UTC(2026, 0, 1) + 60_000),
     ).resolves.toBeUndefined();
+  });
+
+  it("records failed checks so repeated startup attempts observe the cooldown", async () => {
+    let calls = 0;
+    const now = Date.UTC(2026, 0, 1);
+    const failingFetch = (() => {
+      calls += 1;
+      throw new Error("offline");
+    }) as unknown as typeof fetch;
+
+    await expect(stageAutoUpdateIfNeeded(failingFetch, now)).rejects.toThrow("offline");
+    expect((await readUpdateState()).lastCheckedAt).toBe(new Date(now).toISOString());
+
+    await expect(stageAutoUpdateIfNeeded(failingFetch, now + 60_000)).resolves.toBeUndefined();
+    expect(calls).toBe(1);
+  });
+
+  it("refuses to stage an update without a published digest", async () => {
+    const fetchMock = (async () =>
+      new Response(
+        JSON.stringify({
+          tag_name: "v9.9.9",
+          assets: [
+            {
+              name: releaseAssetName,
+              browser_download_url: `https://example.com/${releaseAssetName}`,
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+
+    await expect(stageAutoUpdateIfNeeded(fetchMock, Date.UTC(2026, 0, 1))).rejects.toThrow(
+      "verification data",
+    );
+    await expect(readFile(getPendingUpdatePath())).rejects.toThrow();
   });
 
   it("skips auto update for wrapped installs", async () => {

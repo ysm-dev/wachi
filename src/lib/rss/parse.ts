@@ -2,8 +2,8 @@ import Parser from "rss-parser";
 import { z } from "zod";
 
 const parsedFeedItemSchema = z.object({
-  title: z.string(),
-  link: z.string(),
+  title: z.string().min(1),
+  link: z.string().min(1),
   publishedAt: z.string().nullable(),
 });
 
@@ -99,7 +99,10 @@ const resolveOptionalUrl = (value: string | null, baseUrl: string): string | nul
   }
 
   try {
-    return new URL(value, baseUrl).toString();
+    const resolved = new URL(value, baseUrl);
+    return resolved.protocol === "http:" || resolved.protocol === "https:"
+      ? resolved.toString()
+      : null;
   } catch {
     return null;
   }
@@ -117,12 +120,32 @@ const parseDate = (value: string | undefined): string | null => {
 };
 
 const toDeliveryOrder = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
-  // Most feeds publish newest-first, so reverse source order to notify oldest unseen items first.
-  return [...items].reverse();
+  const timestamped: Array<{ item: ParsedFeedItem; index: number; timestamp: number }> = [];
+  const undated: Array<{ item: ParsedFeedItem; index: number }> = [];
+
+  items.forEach((item, index) => {
+    if (item.publishedAt) {
+      timestamped.push({ item, index, timestamp: Date.parse(item.publishedAt) });
+    } else {
+      undated.push({ item, index });
+    }
+  });
+
+  timestamped.sort((left, right) => left.timestamp - right.timestamp || right.index - left.index);
+  undated.reverse();
+  return [...timestamped.map(({ item }) => item), ...undated.map(({ item }) => item)];
 };
 
 const sanitizeInvalidDates = (xml: string): string => {
-  return xml.replace(/<(updated|published|pubDate|dc:date)>\s*null\s*<\/\1>/gi, "<$1></$1>");
+  return xml.replace(
+    /<(updated|published|pubDate|dc:date)>([^<]*)<\/\1>/gi,
+    (match, tag: string, rawValue: string) => {
+      const value = rawValue.trim();
+      return !value || value.toLowerCase() === "null" || Number.isNaN(Date.parse(value))
+        ? `<${tag}></${tag}>`
+        : match;
+    },
+  );
 };
 
 const isUrlLikeGuid = (value: string | undefined): value is string => {
@@ -140,15 +163,33 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
   });
   const feed = await parser.parseString(sanitizeInvalidDates(xml));
 
-  const items = feed.items.map((item) => {
-    const link = item.link ?? (isUrlLikeGuid(item.guid) ? item.guid : "");
-    const title = item.title ?? item.contentSnippet?.slice(0, 100) ?? "Untitled";
+  const feedRecord = asRecord(feed);
+  const rawItems = Array.isArray(feedRecord?.items) ? feedRecord.items : [];
+  const items = rawItems.flatMap((rawItem): ParsedFeedItem[] => {
+    try {
+      const item = asRecord(rawItem);
+      if (!item) {
+        return [];
+      }
 
-    return {
-      title,
-      link,
-      publishedAt: parseDate(item.isoDate ?? item.pubDate),
-    };
+      const guid = asCleanString(item.guid);
+      const link = asCleanString(item.link) ?? (isUrlLikeGuid(guid ?? undefined) ? guid : null);
+      const snippet = asCleanString(item.contentSnippet);
+      const candidate = parsedFeedItemSchema.safeParse({
+        title: asCleanString(item.title) ?? snippet?.slice(0, 100) ?? "Untitled",
+        link,
+        publishedAt: parseDate(
+          asCleanString(item.isoDate) ?? asCleanString(item.pubDate) ?? undefined,
+        ),
+      });
+
+      if (!candidate.success || !resolveOptionalUrl(candidate.data.link, subscriptionUrl)) {
+        return [];
+      }
+      return [candidate.data];
+    } catch {
+      return [];
+    }
   });
 
   return {

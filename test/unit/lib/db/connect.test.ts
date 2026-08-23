@@ -1,7 +1,9 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { generatedMigrations } from "../../../../src/lib/db/generated-migrations.ts";
 import { sentItems } from "../../../../src/lib/db/schema.ts";
 import { WachiError } from "../../../../src/utils/error.ts";
 
@@ -161,8 +163,40 @@ describe("connectDb", () => {
       "0001_add-indexes",
       "0002_public_yellow_claw",
       "0003_mute_alex_power",
+      "0004_natural_ronan",
+      "0005_tan_leo",
+      "0006_mysterious_richard_fisk",
     ]);
     expect(second).toEqual(first);
+  });
+
+  it("migrates persisted uncertain deliveries back to pending", async () => {
+    const dbPath = join(tempDir, "wachi.db");
+    const sqlite = new Database(dbPath, { create: true });
+    for (const migration of generatedMigrations.slice(0, 4)) {
+      sqlite.exec(migration.sql);
+    }
+    for (const migration of generatedMigrations.slice(0, 4)) {
+      sqlite
+        .query("INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)")
+        .run(migration.id, new Date().toISOString());
+    }
+    sqlite.query("INSERT INTO destinations (identity_key) VALUES (?)").run(Buffer.alloc(32, 1));
+    sqlite
+      .query(
+        "INSERT INTO delivery_outbox (destination_id, link_key, payload, source, link, state, attempts, enqueued_seq, available_at, lease_expires_at, last_error) VALUES (1, ?, 'payload', 'source', 'link', 'uncertain', 3, 1, 0, NULL, 'ambiguous')",
+      )
+      .run(Buffer.alloc(32, 2));
+    sqlite.close();
+
+    connection = await connectDb(dbPath);
+
+    const row = connection.sqlite
+      .query<{ state: string; claim_generation: number; claim_owner: string | null }, []>(
+        "SELECT state, claim_generation, claim_owner FROM delivery_outbox",
+      )
+      .get();
+    expect(row).toEqual({ state: "pending", claim_generation: 0, claim_owner: null });
   });
 
   it("adopts an existing untracked database idempotently", async () => {
@@ -181,6 +215,9 @@ describe("connectDb", () => {
       "0001_add-indexes",
       "0002_public_yellow_claw",
       "0003_mute_alex_power",
+      "0004_natural_ronan",
+      "0005_tan_leo",
+      "0006_mysterious_richard_fisk",
     ]);
   });
 

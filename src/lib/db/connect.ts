@@ -17,6 +17,7 @@ const createDrizzleDb = (sqlite: Database) => {
 };
 
 export type WachiDb = ReturnType<typeof createDrizzleDb>;
+export type WachiDbSession = Pick<WachiDb, "delete" | "insert" | "select" | "update">;
 
 const createConnectedDb = (sqlite: Database, db: WachiDb, path: string) => {
   return { sqlite, db, path };
@@ -40,6 +41,22 @@ const applyGeneratedMigrations = (sqlite: Database): void => {
   const recordMigration = sqlite.query(
     "INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)",
   );
+
+  // An existing database may predate migration tracking. Avoid reapplying the
+  // additive health migration when its column is already present.
+  const healthColumns = sqlite
+    .query<{ name: string }, []>("PRAGMA table_info(health)")
+    .all()
+    .map((column) => column.name);
+  if (healthColumns.includes("last_attempt_at") && !hasMigration.get("0005_tan_leo")) {
+    recordMigration.run("0005_tan_leo", new Date().toISOString());
+  }
+  if (
+    healthColumns.includes("attempt_generation") &&
+    !hasMigration.get("0006_mysterious_richard_fisk")
+  ) {
+    recordMigration.run("0006_mysterious_richard_fisk", new Date().toISOString());
+  }
 
   const migrate = sqlite.transaction(() => {
     for (const migration of generatedMigrations) {

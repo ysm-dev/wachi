@@ -70,6 +70,14 @@ const feedWithInvalidImageXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
+const requireDb = () => {
+  const db = connection?.db;
+  if (!db) {
+    throw new Error("db not initialized");
+  }
+  return db;
+};
+
 describe("fetchRssSubscriptionItems integration", () => {
   it("returns ETag without storing it and uses it after explicit persistence", async () => {
     const etag = '"abc-123"';
@@ -291,6 +299,34 @@ describe("fetchRssSubscriptionItems integration", () => {
     expect(getMetaValue(db, `etag:${scopeB}:${rssUrl}`)).toBe(scopeBEtag);
   });
 
+  it("clears validators omitted by a successful full response", () => {
+    const db = requireDb();
+    const rssUrl = "https://example.com/validators.xml";
+    const scope = "destination:clear";
+
+    persistRssValidators(
+      db,
+      rssUrl,
+      { etag: '"old"', lastModified: "Wed, 01 Jan 2025 00:00:00 GMT" },
+      scope,
+    );
+    persistRssValidators(db, rssUrl, { etag: null, lastModified: null }, scope);
+
+    expect(getMetaValue(db, `etag:${scope}:${rssUrl}`)).toBeNull();
+    expect(getMetaValue(db, `last-modified:${scope}:${rssUrl}`)).toBeNull();
+  });
+
+  it("retains validators omitted by a 304 response", () => {
+    const db = requireDb();
+    const rssUrl = "https://example.com/not-modified.xml";
+    const scope = "destination:retain";
+
+    persistRssValidators(db, rssUrl, { etag: '"old"', lastModified: null }, scope);
+    persistRssValidators(db, rssUrl, { etag: null, lastModified: null }, scope, false);
+
+    expect(getMetaValue(db, `etag:${scope}:${rssUrl}`)).toBe('"old"');
+  });
+
   it("resolves relative item links against the RSS URL", async () => {
     const relativeLinkFeedXml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -320,6 +356,36 @@ describe("fetchRssSubscriptionItems integration", () => {
     const result = await fetchRssSubscriptionItems({
       subscriptionUrl: `http://127.0.0.1:${server.port}/site/articles/index.html`,
       rssUrl,
+    });
+
+    expect(result.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/feeds/items/one`);
+  });
+
+  it("resolves relative item links against the final redirected RSS URL", async () => {
+    const relativeLinkFeedXml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Redirected</title>
+  <item><title>One</title><link>items/one</link></item>
+</channel></rss>`;
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === "/feed.xml") {
+          return Response.redirect(new URL("/feeds/current.xml", request.url), 302);
+        }
+        if (pathname === "/feeds/current.xml") {
+          return new Response(relativeLinkFeedXml, {
+            headers: { "content-type": "application/rss+xml" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push(server);
+
+    const result = await fetchRssSubscriptionItems({
+      subscriptionUrl: `http://127.0.0.1:${server.port}/site`,
+      rssUrl: `http://127.0.0.1:${server.port}/feed.xml`,
     });
 
     expect(result.items[0]?.link).toBe(`http://127.0.0.1:${server.port}/feeds/items/one`);

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ConnectedDb, connectDb } from "../../../../src/lib/db/connect.ts";
 import {
+  admitDeliveryKey,
   admitDeliveryWithOutbox,
   listDeliveryKeys,
   resolveDestinationId,
@@ -14,8 +15,9 @@ import {
   listDeliveryOutbox,
   markDeliveryDispatching,
   markDeliveryRetry,
-  markDeliveryUncertain,
+  rehomeQueuedDelivery,
 } from "../../../../src/lib/db/delivery-outbox.ts";
+import { deliveryOutbox } from "../../../../src/lib/db/schema.ts";
 
 let tempDir = "";
 let connection: ConnectedDb | null = null;
@@ -77,9 +79,15 @@ describe("delivery outbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 100);
-    claimNextDelivery(db, destinationId, { now: 100, leaseDurationMs: 100 });
+    const claimed = claimNextDelivery(db, destinationId, {
+      now: 100,
+      leaseDurationMs: 100,
+    });
+    if (!claimed) {
+      throw new Error("delivery was not claimed");
+    }
 
-    expect(markDeliveryRetry(db, destinationId, key(2), "offline", 50, 100)).toBe(true);
+    expect(markDeliveryRetry(db, claimed, "offline", 50, 100)).toBe(true);
     expect(claimNextDelivery(db, destinationId, { now: 149 })).toBeUndefined();
     const retried = claimNextDelivery(db, destinationId, { now: 150 });
     expect(retried?.state).toBe("reserved");
@@ -94,27 +102,33 @@ describe("delivery outbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
-    claimNextDelivery(db, destinationId, { now: 0, leaseDurationMs: 100 });
-    markDeliveryDispatching(db, destinationId, key(2));
+    const claimed = claimNextDelivery(db, destinationId, { now: 0, leaseDurationMs: 100 });
+    if (!claimed) {
+      throw new Error("delivery was not claimed");
+    }
+    markDeliveryDispatching(db, claimed);
 
-    expect(markDeliveryRetry(db, destinationId, key(2), "rejected", 10, 0)).toBe(true);
+    expect(markDeliveryRetry(db, claimed, "rejected", 10, 0)).toBe(true);
     const retried = claimNextDelivery(db, destinationId, { now: 10 });
     expect(retried?.state).toBe("reserved");
     expect(retried?.attempts).toBe(2);
   });
 
-  it("parks a reserved delivery as uncertain when it cannot be dispatched", () => {
+  it("recovers an existing uncertain delivery", () => {
     const db = connection?.db;
     if (!db) {
       throw new Error("db not initialized");
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
-    claimNextDelivery(db, destinationId, { now: 0 });
+    db.update(deliveryOutbox)
+      .set({ state: "uncertain", lastError: "legacy ambiguous result" })
+      .run();
 
-    expect(markDeliveryUncertain(db, destinationId, key(2), "corrupt payload")).toBe(true);
-    expect(listDeliveryOutbox(db, destinationId)[0]?.state).toBe("uncertain");
-    expect(claimNextDelivery(db, destinationId, { now: 100_000 })).toBeUndefined();
+    const recovered = claimNextDelivery(db, destinationId, { now: 100_000 });
+    expect(recovered?.linkKey).toEqual(key(2));
+    expect(recovered?.state).toBe("reserved");
+    expect(recovered?.attempts).toBe(1);
   });
 
   it("completes success by deleting only the outbox record", () => {
@@ -124,10 +138,13 @@ describe("delivery outbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
-    claimNextDelivery(db, destinationId, { now: 0 });
+    const claimed = claimNextDelivery(db, destinationId, { now: 0 });
+    if (!claimed) {
+      throw new Error("delivery was not claimed");
+    }
 
-    expect(markDeliveryDispatching(db, destinationId, key(2))).toBe(true);
-    expect(completeDeliverySuccess(db, destinationId, key(2))).toBe(true);
+    expect(markDeliveryDispatching(db, claimed)).toBe(true);
+    expect(completeDeliverySuccess(db, claimed)).toBe(true);
     expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
     expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
     expect(
@@ -141,23 +158,60 @@ describe("delivery outbox", () => {
     ).toBe(false);
   });
 
-  it("marks a dispatch with an unknown outcome as uncertain", () => {
+  it("rehomes a queued delivery when the target already has a baseline key", () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const oldDestinationId = resolveDestinationId(db, key(1));
+    const newDestinationId = resolveDestinationId(db, key(2));
+    const linkKey = key(3);
+    admit(oldDestinationId, linkKey, 100);
+    expect(admitDeliveryKey(db, newDestinationId, linkKey)).toBe(true);
+    const queued = listDeliveryOutbox(db, oldDestinationId)[0];
+    if (!queued) {
+      throw new Error("delivery was not queued");
+    }
+
+    expect(rehomeQueuedDelivery(db, queued, newDestinationId)).toBe(true);
+
+    expect(listDeliveryOutbox(db, oldDestinationId)).toHaveLength(0);
+    expect(listDeliveryOutbox(db, newDestinationId)).toMatchObject([
+      { payload: `payload-${linkKey[0]}`, linkKey },
+    ]);
+  });
+
+  it("fences a stale worker after its delivery is reclaimed", () => {
     const db = connection?.db;
     if (!db) {
       throw new Error("db not initialized");
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
-    claimNextDelivery(db, destinationId, { now: 0 });
-    markDeliveryDispatching(db, destinationId, key(2));
-
-    expect(markDeliveryUncertain(db, destinationId, key(2), "connection lost")).toBe(true);
-    expect(listDeliveryOutbox(db, destinationId)[0]).toMatchObject({
-      state: "uncertain",
-      leaseExpiresAt: null,
-      lastError: "connection lost",
+    const stale = claimNextDelivery(db, destinationId, {
+      now: 0,
+      leaseDurationMs: 10,
+      claimOwner: "worker-a",
     });
-    expect(claimNextDelivery(db, destinationId, { now: 100_000 })).toBeUndefined();
+    const current = claimNextDelivery(db, destinationId, {
+      now: 10,
+      leaseDurationMs: 10,
+      claimOwner: "worker-b",
+    });
+    if (!stale || !current) {
+      throw new Error("delivery was not claimed");
+    }
+
+    expect(current.claimGeneration).toBe(stale.claimGeneration + 1);
+    expect(markDeliveryDispatching(db, { ...current, claimOwner: stale.claimOwner })).toBe(false);
+    expect(
+      markDeliveryDispatching(db, { ...current, claimGeneration: stale.claimGeneration }),
+    ).toBe(false);
+    expect(markDeliveryDispatching(db, stale)).toBe(false);
+    expect(markDeliveryRetry(db, stale, "stale failure", 0, 10)).toBe(false);
+    expect(completeDeliverySuccess(db, stale)).toBe(false);
+    expect(markDeliveryDispatching(db, current)).toBe(true);
+    expect(completeDeliverySuccess(db, current)).toBe(true);
   });
 
   it("recovers an expired reservation to pending and retries it", () => {
@@ -167,7 +221,10 @@ describe("delivery outbox", () => {
     }
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
-    claimNextDelivery(db, destinationId, { now: 100, leaseDurationMs: 10 });
+    const claimed = claimNextDelivery(db, destinationId, { now: 100, leaseDurationMs: 10 });
+    if (!claimed) {
+      throw new Error("delivery was not claimed");
+    }
 
     const recovered = claimNextDelivery(db, destinationId, { now: 110, leaseDurationMs: 10 });
 
@@ -176,7 +233,7 @@ describe("delivery outbox", () => {
     expect(recovered?.attempts).toBe(2);
   });
 
-  it("recovers an expired dispatch as uncertain before claiming the next row", () => {
+  it("recovers an expired dispatch for another delivery attempt", () => {
     const db = connection?.db;
     if (!db) {
       throw new Error("db not initialized");
@@ -184,14 +241,18 @@ describe("delivery outbox", () => {
     const destinationId = resolveDestinationId(db, key(1));
     admit(destinationId, key(2), 0);
     admit(destinationId, key(3), 1);
-    claimNextDelivery(db, destinationId, { now: 100, leaseDurationMs: 10 });
-    markDeliveryDispatching(db, destinationId, key(2));
+    const claimed = claimNextDelivery(db, destinationId, { now: 100, leaseDurationMs: 10 });
+    if (!claimed) {
+      throw new Error("delivery was not claimed");
+    }
+    markDeliveryDispatching(db, claimed);
 
     const next = claimNextDelivery(db, destinationId, { now: 110, leaseDurationMs: 10 });
     const records = listDeliveryOutbox(db, destinationId);
 
-    expect(next?.linkKey).toEqual(key(3));
-    expect(records.find((record) => record.linkKey.equals(key(2)))?.state).toBe("uncertain");
-    expect(records.find((record) => record.linkKey.equals(key(3)))?.state).toBe("reserved");
+    expect(next?.linkKey).toEqual(key(2));
+    expect(next?.attempts).toBe(2);
+    expect(records.find((record) => record.linkKey.equals(key(2)))?.state).toBe("reserved");
+    expect(records.find((record) => record.linkKey.equals(key(3)))?.state).toBe("pending");
   });
 });

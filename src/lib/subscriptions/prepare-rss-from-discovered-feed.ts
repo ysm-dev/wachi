@@ -14,7 +14,11 @@ export const prepareRssFromDiscoveredFeed = async (
   return {
     subscription: { url, rss_url: rssUrl },
     subscriptionType: "rss",
-    baselineItems: fetched.items.map((item) => ({ title: item.title, link: item.link })),
+    baselineItems: fetched.items.map((item) => ({
+      title: item.title,
+      link: item.link,
+      publishedAt: item.publishedAt,
+    })),
     warning: undefined,
   };
 };

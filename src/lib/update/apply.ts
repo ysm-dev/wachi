@@ -1,4 +1,4 @@
-import { access, chmod, copyFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { getEnv } from "../../utils/env.ts";
 import { WachiError } from "../../utils/error.ts";
@@ -8,7 +8,12 @@ import {
   getPendingUpdateScriptPath,
   getPendingUpdateStatePath,
 } from "../../utils/paths.ts";
+import { VERSION } from "../../version.ts";
+import { verifyFileSha256 } from "./download.ts";
 import { clearPendingUpdateState, readUpdateState } from "./state.ts";
+import { isNewerVersion } from "./version.ts";
+
+const APPLY_LOCK_STALE_MS = 5 * 60 * 1_000;
 
 const fileExists = async (filePath: string): Promise<boolean> => {
   try {
@@ -50,27 +55,50 @@ const writeWindowsApplyScript = async (): Promise<string> => {
       "  [string]$StagedPath,",
       "  [string]$BackupPath,",
       "  [int]$ParentPid,",
-      "  [string]$StatePath = ''",
+      "  [string]$StatePath = '',",
+      "  [string]$LockPath = ''",
       ")",
-      "$deadline = (Get-Date).AddMinutes(2)",
-      "while ($true) {",
-      "  try {",
-      "    Get-Process -Id $ParentPid -ErrorAction Stop | Out-Null",
-      "    Start-Sleep -Milliseconds 200",
-      "  } catch {",
-      "    break",
-      "  }",
-      "  if ((Get-Date) -gt $deadline) { exit 1 }",
-      "}",
+      '$ErrorActionPreference = "Stop"',
       '$tempPath = "$TargetPath.new"',
-      "if (Test-Path $tempPath) { Remove-Item $tempPath -Force }",
-      "Copy-Item -Force $StagedPath $tempPath",
-      "if (Test-Path $BackupPath) { Remove-Item $BackupPath -Force }",
-      "if (Test-Path $TargetPath) { Move-Item -Force $TargetPath $BackupPath }",
-      "Move-Item -Force $tempPath $TargetPath",
-      "Remove-Item $StagedPath -Force -ErrorAction SilentlyContinue",
-      "if ($StatePath -ne '') { Remove-Item $StatePath -Force -ErrorAction SilentlyContinue }",
-      "exit 0",
+      "$replacementSucceeded = $false",
+      "$exitCode = 0",
+      "try {",
+      "  $deadline = (Get-Date).AddMinutes(2)",
+      "  while ($true) {",
+      "    try {",
+      "      Get-Process -Id $ParentPid -ErrorAction Stop | Out-Null",
+      "      Start-Sleep -Milliseconds 200",
+      "    } catch {",
+      "      break",
+      "    }",
+      '    if ((Get-Date) -gt $deadline) { throw "Timed out waiting for wachi to exit" }',
+      "  }",
+      "  if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction Stop }",
+      "  Copy-Item -Force $StagedPath $tempPath -ErrorAction Stop",
+      "  if (Test-Path $BackupPath) { Remove-Item $BackupPath -Force -ErrorAction Stop }",
+      "  if (Test-Path $TargetPath) {",
+      "    [IO.File]::Replace($tempPath, $TargetPath, $BackupPath, $true)",
+      "  } else {",
+      "    Move-Item -Force $tempPath $TargetPath -ErrorAction Stop",
+      "  }",
+      "  $replacementSucceeded = $true",
+      "  Remove-Item $StagedPath -Force -ErrorAction Stop",
+      "  if ($StatePath -ne '') { Remove-Item $StatePath -Force -ErrorAction Stop }",
+      "} catch {",
+      "  $exitCode = 1",
+      "  if (-not $replacementSucceeded -and -not (Test-Path $TargetPath) -and (Test-Path $BackupPath)) {",
+      "    try {",
+      "      if (Test-Path $TargetPath) { Remove-Item $TargetPath -Force -ErrorAction Stop }",
+      "      Copy-Item -Force $BackupPath $TargetPath -ErrorAction Stop",
+      "    } catch {",
+      "      # Keep the backup, staged binary, and state file for manual recovery.",
+      "    }",
+      "  }",
+      "} finally {",
+      "  if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }",
+      "  if ($LockPath -ne '') { Remove-Item $LockPath -Recurse -Force -ErrorAction SilentlyContinue }",
+      "}",
+      "exit $exitCode",
       "",
     ].join("\n"),
     "utf8",
@@ -82,10 +110,15 @@ const quotePowerShell = (value: string): string => {
   return `'${value.replaceAll("'", "''")}'`;
 };
 
+const quoteWindowsProcessArgument = (value: string): string => {
+  return quotePowerShell(`"${value}"`);
+};
+
 const scheduleWindowsReplacement = async (
   currentBinaryPath: string,
   nextBinaryPath: string,
   statePath?: string,
+  lockPath?: string,
 ): Promise<void> => {
   const scriptPath = await writeWindowsApplyScript();
   const backupPath = `${currentBinaryPath}.bak`;
@@ -101,17 +134,19 @@ const scheduleWindowsReplacement = async (
     "'-ExecutionPolicy',",
     "'Bypass',",
     "'-File',",
-    `${quotePowerShell(scriptPath)},`,
+    `${quoteWindowsProcessArgument(scriptPath)},`,
     "'-TargetPath',",
-    `${quotePowerShell(currentBinaryPath)},`,
+    `${quoteWindowsProcessArgument(currentBinaryPath)},`,
     "'-StagedPath',",
-    `${quotePowerShell(nextBinaryPath)},`,
+    `${quoteWindowsProcessArgument(nextBinaryPath)},`,
     "'-BackupPath',",
-    `${quotePowerShell(backupPath)},`,
+    `${quoteWindowsProcessArgument(backupPath)},`,
     "'-ParentPid',",
-    `${quotePowerShell(String(process.pid))},`,
+    `${quoteWindowsProcessArgument(String(process.pid))},`,
     "'-StatePath',",
-    `${quotePowerShell(statePath ?? "")}`,
+    `${quoteWindowsProcessArgument(statePath ?? "")},`,
+    "'-LockPath',",
+    `${quoteWindowsProcessArgument(lockPath ?? "")}`,
     ")",
   ].join(" ");
 
@@ -143,12 +178,11 @@ const replacePosixBinary = async (
   await copyFile(nextBinaryPath, candidatePath);
   await chmod(candidatePath, 0o755);
   await rm(backupPath, { force: true });
-  await rename(currentBinaryPath, backupPath);
+  await copyFile(currentBinaryPath, backupPath);
 
   try {
     await rename(candidatePath, currentBinaryPath);
   } catch (error) {
-    await rename(backupPath, currentBinaryPath).catch(() => undefined);
     await rm(candidatePath, { force: true });
     throw error;
   }
@@ -161,9 +195,10 @@ export const replaceStandaloneBinary = async (
   nextBinaryPath: string,
   platform: NodeJS.Platform = process.platform,
   statePath?: string,
+  lockPath?: string,
 ): Promise<"replaced" | "scheduled"> => {
   if (platform === "win32") {
-    await scheduleWindowsReplacement(currentBinaryPath, nextBinaryPath, statePath);
+    await scheduleWindowsReplacement(currentBinaryPath, nextBinaryPath, statePath, lockPath);
     return "scheduled";
   }
 
@@ -171,35 +206,98 @@ export const replaceStandaloneBinary = async (
   return "replaced";
 };
 
-export const applyPendingAutoUpdate = async (): Promise<boolean> => {
-  const state = await readUpdateState();
-  const pendingPath = getPendingUpdatePath();
-  if (!state.pending || !(await fileExists(pendingPath))) {
-    if (state.pending) {
-      await clearPendingUpdateState();
+export const acquireUpdateApplyLock = async (): Promise<{
+  path: string;
+  release: () => Promise<void>;
+} | null> => {
+  const lockPath = `${getPendingUpdateStatePath()}.apply-lock`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await ensureParentDir(lockPath);
+      await mkdir(lockPath);
+      return {
+        path: lockPath,
+        release: () => rm(lockPath, { recursive: true, force: true }),
+      };
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
+        throw error;
+      }
+
+      if (attempt === 0) {
+        const lockStat = await stat(lockPath).catch(() => null);
+        if (lockStat && Date.now() - lockStat.mtimeMs >= APPLY_LOCK_STALE_MS) {
+          await rm(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      }
+      return null;
     }
+  }
+  return null;
+};
+
+export const applyPendingAutoUpdate = async (): Promise<boolean> => {
+  if (getEnv().noAutoUpdate) {
     return false;
   }
 
-  const currentBinaryPath = process.execPath;
-  if (!currentBinaryPath || !isStandaloneInvocation(currentBinaryPath)) {
+  const lock = await acquireUpdateApplyLock();
+  if (!lock) {
     return false;
   }
 
-  if (state.pending.targetPath !== currentBinaryPath) {
+  let lockTransferred = false;
+  try {
+    const state = await readUpdateState();
+    const pendingPath = getPendingUpdatePath();
+    if (!state.pending || !(await fileExists(pendingPath))) {
+      if (state.pending) {
+        await clearPendingUpdateState();
+      }
+      return false;
+    }
+
+    if (!isNewerVersion(VERSION, state.pending.version)) {
+      await clearPendingUpdateState();
+      return false;
+    }
+
+    const currentBinaryPath = process.execPath;
+    if (!currentBinaryPath || !isStandaloneInvocation(currentBinaryPath)) {
+      return false;
+    }
+
+    if (state.pending.targetPath !== currentBinaryPath) {
+      return false;
+    }
+
+    if (!(await verifyFileSha256(pendingPath, state.pending.digest))) {
+      await clearPendingUpdateState();
+      throw new WachiError(
+        "Staged update failed verification",
+        "The downloaded release asset changed after it was staged.",
+        "Run the command again to download a verified update.",
+      );
+    }
+
+    const outcome = await replaceStandaloneBinary(
+      currentBinaryPath,
+      pendingPath,
+      process.platform,
+      getPendingUpdateStatePath(),
+      lock.path,
+    );
+    if (outcome === "replaced") {
+      await clearPendingUpdateState();
+      return true;
+    }
+
+    lockTransferred = true;
     return false;
+  } finally {
+    if (!lockTransferred) {
+      await lock.release();
+    }
   }
-
-  const outcome = await replaceStandaloneBinary(
-    currentBinaryPath,
-    pendingPath,
-    process.platform,
-    getPendingUpdateStatePath(),
-  );
-  if (outcome === "replaced") {
-    await clearPendingUpdateState();
-    return true;
-  }
-
-  return false;
 };

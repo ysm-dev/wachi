@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("parseRssItems", () => {
-  it("reverses feed source order for delivery", async () => {
+  it("orders dated feed items oldest-first", async () => {
     const xml = await readFile(fixturePath("rss", "basic.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
@@ -54,13 +54,13 @@ describe("parseRssItems", () => {
     const xml = await readFile(fixturePath("rss", "fallback.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/subscription");
 
-    expect(items[0]?.link).toBe("https://example.com/title-without-link");
-    expect(items[0]?.title).toBe("Title Without Link");
-    expect(items[1]?.link).toBe("https://example.com/guid-only");
-    expect(items[1]?.title.startsWith("This item has no title field")).toBe(true);
+    expect(items[0]?.link).toBe("https://example.com/guid-only");
+    expect(items[0]?.title.startsWith("This item has no title field")).toBe(true);
+    expect(items[1]?.link).toBe("https://example.com/title-without-link");
+    expect(items[1]?.title).toBe("Title Without Link");
   });
 
-  it("leaves missing links and opaque GUIDs invalid", async () => {
+  it("skips items with missing links and opaque GUIDs", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
@@ -76,13 +76,42 @@ describe("parseRssItems", () => {
 </rss>`;
 
     const items = await parseRssItems(xml, "https://example.com/subscription");
-    const linksByTitle = Object.fromEntries(items.map((item) => [item.title, item.link]));
+    expect(items).toEqual([]);
+  });
 
-    expect(linksByTitle).toEqual({
-      "Opaque GUID": "",
-      "Missing Link": "",
-    });
-    expect(items.some((item) => item.link === "https://example.com/subscription")).toBe(false);
+  it("sorts timestamps instead of assuming source order", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Unsorted</title>
+  <item><title>Middle</title><link>https://example.com/middle</link><pubDate>Tue, 02 Jan 2024 00:00:00 GMT</pubDate></item>
+  <item><title>Oldest</title><link>https://example.com/oldest</link><pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate></item>
+  <item><title>Newest</title><link>https://example.com/newest</link><pubDate>Wed, 03 Jan 2024 00:00:00 GMT</pubDate></item>
+</channel></rss>`;
+
+    const items = await parseRssItems(xml, "https://example.com/feed.xml");
+
+    expect(items.map((item) => item.title)).toEqual(["Oldest", "Middle", "Newest"]);
+  });
+
+  it("skips one malformed parser item without dropping valid items", async () => {
+    Parser.prototype.parseString = (async () => {
+      return {
+        title: "Partially malformed",
+        items: [
+          { title: { unexpected: true }, link: { href: "https://example.com/bad" } },
+          { title: "Valid", link: "https://example.com/valid", isoDate: "2024-01-01" },
+        ],
+      };
+    }) as typeof Parser.prototype.parseString;
+
+    const parsed = await parseRssFeed("<rss />", "https://example.com/feed.xml");
+
+    expect(parsed.items).toEqual([
+      {
+        title: "Valid",
+        link: "https://example.com/valid",
+        publishedAt: "2024-01-01T00:00:00.000Z",
+      },
+    ]);
   });
 
   it("throws on malformed feed XML", async () => {
@@ -160,6 +189,29 @@ describe("parseRssItems", () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]?.publishedAt).toBeNull();
+  });
+
+  it("keeps Atom entries when an updated date is invalid", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Invalid Atom Date</title>
+  <entry>
+    <title>Still Deliver This</title>
+    <link href="https://example.com/atom-item" />
+    <id>https://example.com/atom-item</id>
+    <updated>not-a-date</updated>
+  </entry>
+</feed>`;
+
+    const items = await parseRssItems(xml, "https://example.com/feed.xml");
+
+    expect(items).toEqual([
+      {
+        title: "Still Deliver This",
+        link: "https://example.com/atom-item",
+        publishedAt: null,
+      },
+    ]);
   });
 
   it("extracts feed title and image metadata", async () => {

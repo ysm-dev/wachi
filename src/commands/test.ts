@@ -7,6 +7,7 @@ import { sendNotification } from "../lib/notify/send.ts";
 import type { SourceIdentity } from "../lib/notify/source-identity.ts";
 import { fetchRssSubscriptionItems } from "../lib/subscriptions/fetch-rss-subscription-items.ts";
 import { withLinkFallbackAvatar } from "../lib/subscriptions/resolve-source-identity.ts";
+import { getEnv } from "../utils/env.ts";
 import { WachiError } from "../utils/error.ts";
 import {
   commandJson,
@@ -105,6 +106,7 @@ export const testCommand = defineCommand({
           `Create one with: wachi sub -n "${channelName}" -a "<apprise-url>" "<url>"`,
         );
       }
+      const effectiveAppriseUrl = getEnv().appriseUrlOverride ?? channel.apprise_url;
 
       const sourceIdentity = await resolveTestSourceIdentity({
         channelName,
@@ -125,7 +127,7 @@ export const testCommand = defineCommand({
       }
 
       await sendNotification({
-        appriseUrl: channel.apprise_url,
+        appriseUrl: effectiveAppriseUrl,
         body: TEST_BODY,
         sourceIdentity,
       });
@@ -134,7 +136,7 @@ export const testCommand = defineCommand({
         printJsonSuccess({ sent: true });
       } else {
         printStdout(
-          `Test notification sent to ${channel.name} (${maskAppriseUrl(channel.apprise_url)})`,
+          `Test notification sent to ${channel.name} (${maskAppriseUrl(effectiveAppriseUrl)})`,
         );
       }
 

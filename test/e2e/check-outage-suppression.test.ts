@@ -91,8 +91,8 @@ const setup = async (prefix: string) => {
   };
 };
 
-describe("wachi check run-level outage suppression", () => {
-  it("suppresses failure counters when most subscriptions fail in one run", async () => {
+describe("wachi check run-level outage correlation", () => {
+  it("does not mutate failure counters during outage dry-runs", async () => {
     const server = startServer();
     const { configPath, env } = await setup("wachi-e2e-outage-");
     const paths = ["/f1.xml", "/f2.xml", "/f3.xml", "/f4.xml", "/f5.xml", "/f6.xml"];
@@ -113,7 +113,7 @@ describe("wachi check run-level outage suppression", () => {
     expect(listed.stdout).not.toContain("failures");
   }, 60_000);
 
-  it("records failures normally when only a minority fail", async () => {
+  it("does not mutate failures during a minority dry-run", async () => {
     const server = startServer();
     const { configPath, env } = await setup("wachi-e2e-minority-");
     const paths = ["/ok-1.xml", "/ok-2.xml", "/ok-3.xml", "/ok-4.xml", "/f1.xml", "/f2.xml"];
@@ -127,10 +127,10 @@ describe("wachi check run-level outage suppression", () => {
     expect(result.exitCode).toBe(2);
 
     const listed = await runCli(["ls", "--config", configPath], env);
-    expect(listed.stdout).toContain("[1 failures]");
+    expect(listed.stdout).not.toContain("failures");
   }, 30_000);
 
-  it("does not suppress a small config where every subscription fails", async () => {
+  it("does not mutate failures for a small dry-run", async () => {
     const server = startServer();
     const { configPath, env } = await setup("wachi-e2e-small-");
     await writeConfig(configPath, server.port, ["/f1.xml", "/f2.xml"]);
@@ -142,6 +142,6 @@ describe("wachi check run-level outage suppression", () => {
     expect(result.exitCode).toBe(1);
 
     const listed = await runCli(["ls", "--config", configPath], env);
-    expect(listed.stdout).toContain("[1 failures]");
+    expect(listed.stdout).not.toContain("failures");
   }, 30_000);
 });

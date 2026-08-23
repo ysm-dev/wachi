@@ -15,7 +15,7 @@ import {
 } from "../../utils/paths.ts";
 import { applyConfigDefaults, type UserConfig, userConfigSchema } from "./schema.ts";
 
-type ConfigFormat = "yaml" | "json" | "jsonc";
+export type ConfigFormat = "yaml" | "json" | "jsonc";
 
 const readConfigResultSchema = z.object({
   config: z.custom<ReturnType<typeof applyConfigDefaults>>(),
@@ -25,7 +25,7 @@ const readConfigResultSchema = z.object({
   exists: z.boolean(),
 });
 
-type ReadConfigResult = z.infer<typeof readConfigResultSchema>;
+export type ReadConfigResult = z.infer<typeof readConfigResultSchema>;
 
 const pathExists = async (path: string): Promise<boolean> => {
   try {
@@ -115,6 +115,10 @@ const parseConfigContent = (content: string, format: ConfigFormat): unknown => {
   }
 
   const document = parseDocument(content);
+  const firstError = document.errors[0];
+  if (firstError) {
+    throw new Error(firstError.message);
+  }
   const parsed = document.toJSON();
   return parsed ?? {};
 };
@@ -146,16 +150,17 @@ const migrateLegacyMacOsConfig = async (): Promise<void> => {
 };
 
 export const readConfig = async (configPathOverride?: string): Promise<ReadConfigResult> => {
-  if (!configPathOverride) {
+  const envConfigPath = getEnv().configPath;
+  if (!envConfigPath && !configPathOverride) {
     await migrateLegacyMacOsConfig();
   }
 
-  const requestedPath = configPathOverride ?? getDefaultConfigPath();
+  const requestedPath = configPathOverride ?? envConfigPath ?? getDefaultConfigPath();
   const yamlPath = getDefaultConfigPath();
   const jsoncPath = getDefaultJsoncConfigPath();
   const jsonPath = getDefaultJsonConfigPath();
 
-  const explicitPathProvided = Boolean(configPathOverride);
+  const explicitPathProvided = Boolean(envConfigPath || configPathOverride);
   const resolvedPath = explicitPathProvided
     ? requestedPath
     : (await pathExists(yamlPath))

@@ -1,0 +1,1 @@
+ALTER TABLE `health` ADD `last_attempt_at` text;

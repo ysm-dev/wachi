@@ -126,6 +126,21 @@ describe("wachi CLI JSON/error behavior", () => {
     expect(payload.data.errors).toEqual([]);
   });
 
+  it("returns an error when --name does not match a channel", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-unknown-channel-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+
+    const result = await runCli(["check", "--json", "--name", "missing", "--config", configPath], {
+      WACHI_NO_AUTO_UPDATE: "1",
+    });
+
+    expect(result.exitCode).toBe(1);
+    const payload = JSON.parse(result.stdout);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.what).toContain("Channel not found: missing");
+  });
+
   it("returns removed: 0 for missing channel in JSON unsub", async () => {
     const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-unsub-json-"));
     testDirs.push(dir);

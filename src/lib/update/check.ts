@@ -1,9 +1,10 @@
 import { access } from "node:fs/promises";
 import { getEnv } from "../../utils/env.ts";
+import { WachiError } from "../../utils/error.ts";
 import { getPendingUpdatePath } from "../../utils/paths.ts";
 import { VERSION } from "../../version.ts";
 import { detectInstallMethod } from "./detect-method.ts";
-import { downloadReleaseAsset } from "./download.ts";
+import { downloadReleaseAsset, verifyFileSha256 } from "./download.ts";
 import { fetchLatestRelease } from "./release.ts";
 import { clearPendingUpdateState, readUpdateState, writeUpdateState } from "./state.ts";
 import { isNewerVersion } from "./version.ts";
@@ -40,12 +41,28 @@ export const stageAutoUpdateIfNeeded = async (
     }
   }
 
-  const latestRelease = await fetchLatestRelease(fetchFn);
   const checkedAt = new Date(now).toISOString();
+  let latestRelease: Awaited<ReturnType<typeof fetchLatestRelease>>;
+  try {
+    latestRelease = await fetchLatestRelease(fetchFn);
+  } catch (error) {
+    await writeUpdateState({ ...(await readUpdateState()), lastCheckedAt: checkedAt });
+    throw error;
+  }
+
   if (!isNewerVersion(VERSION, latestRelease.version)) {
     await clearPendingUpdateState();
     await writeUpdateState({ lastCheckedAt: checkedAt });
     return;
+  }
+
+  if (!latestRelease.digest) {
+    await writeUpdateState({ ...(await readUpdateState()), lastCheckedAt: checkedAt });
+    throw new WachiError(
+      "Update verification data is unavailable",
+      "GitHub did not publish a SHA-256 digest for the release asset.",
+      "Keep the current version and try again after the release metadata is complete.",
+    );
   }
 
   const pendingPath = getPendingUpdatePath();
@@ -53,11 +70,24 @@ export const stageAutoUpdateIfNeeded = async (
   const updateAlreadyStaged = pending
     ? pending.version === latestRelease.version &&
       pending.targetPath === process.execPath &&
-      (await fileExists(pendingPath))
+      pending.digest === latestRelease.digest &&
+      (await fileExists(pendingPath)) &&
+      (await verifyFileSha256(pendingPath, pending.digest))
     : false;
 
   if (!updateAlreadyStaged) {
-    await downloadReleaseAsset(latestRelease.downloadUrl, pendingPath, fetchFn);
+    try {
+      await downloadReleaseAsset(
+        latestRelease.downloadUrl,
+        pendingPath,
+        fetchFn,
+        process.platform,
+        latestRelease.digest,
+      );
+    } catch (error) {
+      await writeUpdateState({ ...(await readUpdateState()), lastCheckedAt: checkedAt });
+      throw error;
+    }
   }
 
   await writeUpdateState({
@@ -66,6 +96,7 @@ export const stageAutoUpdateIfNeeded = async (
       version: latestRelease.version,
       assetName: latestRelease.assetName,
       targetPath: process.execPath,
+      digest: latestRelease.digest,
     },
   });
 };

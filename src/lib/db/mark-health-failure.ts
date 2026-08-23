@@ -1,41 +1,35 @@
-import type { WachiDb } from "./connect.ts";
+import { and, eq, sql } from "drizzle-orm";
+import type { WachiDbSession } from "./connect.ts";
 import type { HealthState } from "./get-health-state.ts";
 import { getHealthState } from "./get-health-state.ts";
+import { beginHealthAttempt } from "./health-attempt.ts";
 import { health } from "./schema.ts";
 
 export const markHealthFailure = (
-  db: WachiDb,
+  db: WachiDbSession,
   channelUrl: string,
   subscriptionUrl: string,
   errorMessage: string,
+  attemptGeneration?: number,
 ): HealthState => {
-  const current = getHealthState(db, channelUrl, subscriptionUrl);
-  const nextFailures = current.consecutiveFailures + 1;
-  const now = new Date().toISOString();
-
-  db.insert(health)
-    .values({
-      channelUrl,
-      subscriptionUrl,
-      consecutiveFailures: nextFailures,
+  const generation = attemptGeneration ?? beginHealthAttempt(db, channelUrl, subscriptionUrl);
+  const failedAt = new Date().toISOString();
+  const updated = db
+    .update(health)
+    .set({
+      consecutiveFailures: sql`${health.consecutiveFailures} + 1`,
       lastError: errorMessage,
-      lastFailureAt: now,
+      lastFailureAt: failedAt,
     })
-    .onConflictDoUpdate({
-      target: [health.channelUrl, health.subscriptionUrl],
-      set: {
-        consecutiveFailures: nextFailures,
-        lastError: errorMessage,
-        lastFailureAt: now,
-      },
-    })
-    .run();
+    .where(
+      and(
+        eq(health.channelUrl, channelUrl),
+        eq(health.subscriptionUrl, subscriptionUrl),
+        eq(health.attemptGeneration, generation),
+      ),
+    )
+    .returning()
+    .get();
 
-  return {
-    channelUrl,
-    subscriptionUrl,
-    consecutiveFailures: nextFailures,
-    lastError: errorMessage,
-    lastFailureAt: now,
-  };
+  return updated ?? getHealthState(db, channelUrl, subscriptionUrl);
 };

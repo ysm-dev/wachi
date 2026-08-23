@@ -76,8 +76,8 @@ describe("sendNotification", () => {
       body: "hello",
     }).catch((thrown) => thrown);
     expect(error).toBeInstanceOf(NotificationDeliveryError);
-    // A non-zero exit means apprise ran and reported failure: safe to retry.
-    expect((error as NotificationDeliveryError).outcome).toBe("undelivered");
+    // Apprise may have delivered before reporting a partial or later failure.
+    expect((error as NotificationDeliveryError).outcome).toBe("unknown");
   });
 
   it("throws timeout WachiError and kills process when apprise hangs", async () => {

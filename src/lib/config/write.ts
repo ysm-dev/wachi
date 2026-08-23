@@ -1,4 +1,5 @@
-import { chmod, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, rename, rm, writeFile } from "node:fs/promises";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { fromError } from "zod-validation-error";
@@ -36,7 +37,7 @@ export const writeConfig = async ({ config, path, format }: WriteConfigOptions):
 
   await ensureParentDir(path);
 
-  const tmpPath = `${path}.tmp`;
+  const tmpPath = `${path}.${process.pid}-${randomUUID()}.tmp`;
   const text = toConfigText(validated.data, format);
 
   try {
@@ -44,6 +45,7 @@ export const writeConfig = async ({ config, path, format }: WriteConfigOptions):
     await rename(tmpPath, path);
     await chmod(path, 0o600);
   } catch (error) {
+    await rm(tmpPath, { force: true }).catch(() => undefined);
     throw new WachiError(
       `Failed to write config at ${path}`,
       error instanceof Error ? error.message : "Could not write config file.",

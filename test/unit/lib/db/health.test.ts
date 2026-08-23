@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ConnectedDb, connectDb } from "../../../../src/lib/db/connect.ts";
 import { getHealthState } from "../../../../src/lib/db/get-health-state.ts";
+import { beginHealthAttempt } from "../../../../src/lib/db/health-attempt.ts";
 import { listHealthStates } from "../../../../src/lib/db/list-health-states.ts";
 import { markHealthFailure } from "../../../../src/lib/db/mark-health-failure.ts";
 import { markHealthSuccess } from "../../../../src/lib/db/mark-health-success.ts";
@@ -62,6 +63,24 @@ describe("health db operations", () => {
     expect(state.consecutiveFailures).toBe(0);
     expect(state.lastError).toBeNull();
     expect(listHealthStates(db)).toEqual([]);
+  });
+
+  it("ignores stale overlapping check results", () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+
+    const first = beginHealthAttempt(db, "main", "https://example.com");
+    const second = beginHealthAttempt(db, "main", "https://example.com");
+    markHealthFailure(db, "main", "https://example.com", "newer failure", second);
+    markHealthSuccess(db, "main", "https://example.com", first);
+    expect(getHealthState(db, "main", "https://example.com").consecutiveFailures).toBe(1);
+
+    const third = beginHealthAttempt(db, "main", "https://example.com");
+    markHealthSuccess(db, "main", "https://example.com", third);
+    markHealthFailure(db, "main", "https://example.com", "stale failure", second);
+    expect(getHealthState(db, "main", "https://example.com").consecutiveFailures).toBe(0);
   });
 
   it("listHealthStates returns persisted records", () => {

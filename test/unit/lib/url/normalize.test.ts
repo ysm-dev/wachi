@@ -12,4 +12,9 @@ describe("normalizeUrl", () => {
     const normalized = normalizeUrl("https://example.com/");
     expect(normalized.url).toBe("https://example.com");
   });
+
+  it("preserves a meaningful non-root trailing slash", () => {
+    const normalized = normalizeUrl("https://example.com/feed/");
+    expect(normalized.url).toBe("https://example.com/feed/");
+  });
 });

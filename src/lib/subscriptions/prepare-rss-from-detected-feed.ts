@@ -18,6 +18,7 @@ export const prepareRssFromDetectedFeed = async (
     baselineItems: parsedFeed.items.map((item) => ({
       title: item.title,
       link: canonicalizeItemUrl(item.link, rssUrl) ?? item.link,
+      publishedAt: item.publishedAt,
     })),
     warning: undefined,
   };

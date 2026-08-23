@@ -95,7 +95,7 @@ const setup = async (prefix: string) => {
 };
 
 describe("wachi check host outage detection", () => {
-  it("suppresses a dead self-hosted backend that is a minority of the run", async () => {
+  it("correlates a dead self-hosted backend without mutating dry-run state", async () => {
     // Mirrors the real setup: torss down, RSSHub and the public web fine.
     const torss = startBackend(false);
     const rsshub = startBackend(true);
@@ -123,7 +123,7 @@ describe("wachi check host outage detection", () => {
     expect(listed.stdout).not.toContain("failures");
   }, 90_000);
 
-  it("still records a single dead feed on an otherwise healthy host", async () => {
+  it("reports a single dead feed without mutating dry-run state", async () => {
     const web = startBackend(true);
     const subs: Sub[] = [
       { host: web, slug: "dead-one" },
@@ -140,6 +140,6 @@ describe("wachi check host outage detection", () => {
     expect(payload.data.errors.length).toBe(1);
 
     const listed = await runCli(["ls", "--config", configPath], env);
-    expect(listed.stdout).toContain("[1 failures]");
+    expect(listed.stdout).not.toContain("failures");
   }, 30_000);
 });

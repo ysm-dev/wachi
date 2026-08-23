@@ -31,7 +31,11 @@ const createFeed = (title: string, link: string): string => {
 const createFakeAppriseBin = async (dir: string): Promise<string> => {
   const binDir = join(dir, "bin");
   await mkdir(binDir, { recursive: true });
-  await writeFile(join(binDir, "uvx"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  await writeFile(
+    join(binDir, "uvx"),
+    '#!/bin/sh\nfor last do :; done\n[ -n "$WACHI_TEST_CAPTURE" ] && printf "%s" "$last" > "$WACHI_TEST_CAPTURE"\nexit 0\n',
+    { mode: 0o755 },
+  );
   return binDir;
 };
 
@@ -215,7 +219,7 @@ describe("wachi CLI", () => {
     servers.push(server);
 
     const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
-    const originUrl = `http://127.0.0.1:${server.port}/site`;
+    const originUrl = `http://127.0.0.1:${server.port}/site/`;
     const baseEnv = {
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       WACHI_DB_PATH: dbPath,
@@ -303,5 +307,137 @@ describe("wachi CLI", () => {
     const payload = JSON.parse(result.stdout);
     expect(payload.ok).toBe(true);
     expect(payload.data.baseline_count).toBe(0);
+  });
+
+  it("applies WACHI_APPRISE_URL to test notifications", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-test-override-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const capturePath = join(dir, "apprise-url.txt");
+    const binDir = await createFakeAppriseBin(dir);
+    await writeFile(
+      configPath,
+      "channels:\n  - name: main\n    apprise_url: slack://saved/channel\n    subscriptions: []\n",
+      "utf8",
+    );
+
+    const result = await runCli(["test", "--name", "main", "--config", configPath], {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      WACHI_APPRISE_URL: "discord://override/token",
+      WACHI_TEST_CAPTURE: capturePath,
+      WACHI_NO_AUTO_UPDATE: "1",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(await Bun.file(capturePath).text()).toBe("discord://override/token");
+    expect(result.stdout).toContain("discord://overr.../token");
+  });
+
+  it("preserves concurrent subscriptions to the same config", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-concurrent-sub-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname;
+        return new Response(createFeed(path, `https://example.com${path}`), {
+          headers: { "content-type": "application/rss+xml" },
+        });
+      },
+    });
+    servers.push(server);
+    const firstUrl = `http://127.0.0.1:${server.port}/first.xml`;
+    const secondUrl = `http://127.0.0.1:${server.port}/second.xml`;
+    const commonArgs = ["sub", "--send-existing", "--name", "main", "--apprise-url", "slack://x/y"];
+
+    const [first, second] = await Promise.all([
+      runCli([...commonArgs, firstUrl, "--config", configPath], {
+        WACHI_DB_PATH: join(dir, "first.db"),
+        WACHI_NO_AUTO_UPDATE: "1",
+      }),
+      runCli([...commonArgs, secondUrl, "--config", configPath], {
+        WACHI_DB_PATH: join(dir, "second.db"),
+        WACHI_NO_AUTO_UPDATE: "1",
+      }),
+    ]);
+
+    expect(first.exitCode).toBe(0);
+    expect(second.exitCode).toBe(0);
+    const listed = await runCli(["ls", "--json", "--config", configPath], {
+      WACHI_NO_AUTO_UPDATE: "1",
+    });
+    const payload = JSON.parse(listed.stdout);
+    expect(payload.data.channels[0].subscriptions).toHaveLength(2);
+  });
+
+  it("does not restore stale config when sub and unsub overlap", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wachi-e2e-sub-unsub-race-"));
+    testDirs.push(dir);
+    const configPath = join(dir, "config.yml");
+    const oldUrl = "https://example.com/old.xml";
+    await writeFile(
+      configPath,
+      `channels:
+  - name: main
+    apprise_url: slack://x/y
+    subscriptions:
+      - url: ${oldUrl}
+        rss_url: ${oldUrl}
+`,
+      "utf8",
+    );
+
+    let releaseFeed!: () => void;
+    let markFeedRequested!: () => void;
+    const feedGate = new Promise<void>((resolve) => {
+      releaseFeed = resolve;
+    });
+    const feedRequested = new Promise<void>((resolve) => {
+      markFeedRequested = resolve;
+    });
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        markFeedRequested();
+        await feedGate;
+        const url = request.url;
+        return new Response(createFeed("new", url), {
+          headers: { "content-type": "application/rss+xml" },
+        });
+      },
+    });
+    servers.push(server);
+    const newUrl = `http://127.0.0.1:${server.port}/new.xml`;
+    const baseEnv = { WACHI_NO_AUTO_UPDATE: "1" };
+
+    const subscribe = runCli(
+      [
+        "sub",
+        "--send-existing",
+        "--name",
+        "main",
+        "--apprise-url",
+        "slack://x/y",
+        newUrl,
+        "--config",
+        configPath,
+      ],
+      { ...baseEnv, WACHI_DB_PATH: join(dir, "sub.db") },
+    );
+    await feedRequested;
+
+    const unsubscribe = await runCli(
+      ["unsub", "--name", "main", oldUrl, "--config", configPath],
+      baseEnv,
+    );
+    expect(unsubscribe.exitCode).toBe(0);
+    releaseFeed();
+    expect((await subscribe).exitCode).toBe(0);
+
+    const listed = await runCli(["ls", "--json", "--config", configPath], baseEnv);
+    const subscriptions = JSON.parse(listed.stdout).data.channels[0].subscriptions;
+    expect(subscriptions).toHaveLength(1);
+    expect(subscriptions[0].rss_url).toBe(newUrl);
   });
 });

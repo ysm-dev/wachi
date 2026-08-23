@@ -1,6 +1,9 @@
 import { load } from "cheerio";
-import { resolveUrl } from "../url/resolve.ts";
+import { isSafeDiscoveredHttpUrl } from "../url/network-policy.ts";
+import { resolveHttpUrl } from "../url/resolve.ts";
 import { detectRssUrl } from "./detect.ts";
+
+const MAX_ALTERNATE_FEED_LINKS = 16;
 
 const COMMON_FEED_PATHS = [
   "/rss",
@@ -18,6 +21,10 @@ const extractAlternateLinks = (html: string, pageUrl: string): string[] => {
   const discovered: string[] = [];
 
   $("link[rel='alternate']").each((_index, element) => {
+    if (discovered.length >= MAX_ALTERNATE_FEED_LINKS) {
+      return false;
+    }
+
     const type = ($(element).attr("type") ?? "").toLowerCase();
     const href = $(element).attr("href");
 
@@ -30,7 +37,10 @@ const extractAlternateLinks = (html: string, pageUrl: string): string[] => {
       type.includes("application/atom+xml") ||
       type.includes("xml")
     ) {
-      discovered.push(resolveUrl(href, pageUrl));
+      const resolved = resolveHttpUrl(href, pageUrl);
+      if (resolved && isSafeDiscoveredHttpUrl(resolved, pageUrl)) {
+        discovered.push(resolved);
+      }
     }
   });
 
@@ -42,7 +52,10 @@ export const discoverRssFeedUrl = async (pageUrl: string, html: string): Promise
   candidates.push(...extractAlternateLinks(html, pageUrl));
 
   for (const path of COMMON_FEED_PATHS) {
-    candidates.push(resolveUrl(path, pageUrl));
+    const resolved = resolveHttpUrl(path, pageUrl);
+    if (resolved && isSafeDiscoveredHttpUrl(resolved, pageUrl)) {
+      candidates.push(resolved);
+    }
   }
 
   const deduped = [...new Set(candidates)];
@@ -50,7 +63,7 @@ export const discoverRssFeedUrl = async (pageUrl: string, html: string): Promise
     try {
       const detected = await detectRssUrl(candidate);
       if (detected.status < 400 && detected.isRss) {
-        return candidate;
+        return detected.url;
       }
     } catch {}
   }

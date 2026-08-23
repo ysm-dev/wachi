@@ -3,22 +3,41 @@ import { buildDestinationKey } from "../notify/destination-identity.ts";
 import { canonicalizeFeedUrl } from "../url/canonicalize-item-url.ts";
 import { toChannelNameKey } from "./channel-name-key.ts";
 
-export const cleanupConfigSchema = z.object({
-  // Accepted for compatibility with existing configs. Delivery keys are permanent.
-  ttl_days: z.number().int().positive().default(90),
-  max_records: z.number().int().positive().default(50_000),
-});
+export const cleanupConfigSchema = z
+  .object({
+    // Accepted for compatibility with existing configs. Delivery keys are permanent.
+    ttl_days: z.number().int().positive().default(90),
+    max_records: z.number().int().positive().default(50_000),
+  })
+  .strict();
 
-export const subscriptionSchema = z.object({
-  url: z.string().url(),
-  rss_url: z.string().url(),
-});
+export const subscriptionSchema = z
+  .object({
+    url: z.string().url(),
+    rss_url: z.string().url(),
+  })
+  .strict();
 
-export const channelSchema = z.object({
-  name: z.string().trim().min(1),
-  apprise_url: z.string().min(1),
-  subscriptions: z.array(subscriptionSchema).default([]),
-});
+export const channelSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    apprise_url: z
+      .string()
+      .min(1)
+      .refine(
+        (value) => {
+          try {
+            buildDestinationKey(value);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        { message: "Must be a valid Apprise URL." },
+      ),
+    subscriptions: z.array(subscriptionSchema).default([]),
+  })
+  .strict();
 
 const channelsSchema = z.array(channelSchema).superRefine((channels, context) => {
   const seen = new Set<string>();
@@ -62,16 +81,20 @@ const channelsSchema = z.array(channelSchema).superRefine((channels, context) =>
   }
 });
 
-export const linkTransformSchema = z.object({
-  from: z.string().min(1),
-  to: z.string().min(1),
-});
+export const linkTransformSchema = z
+  .object({
+    from: z.string().min(1),
+    to: z.string().min(1),
+  })
+  .strict();
 
-export const userConfigSchema = z.object({
-  cleanup: cleanupConfigSchema.partial().optional(),
-  channels: channelsSchema.optional(),
-  link_transforms: z.array(linkTransformSchema).optional(),
-});
+export const userConfigSchema = z
+  .object({
+    cleanup: cleanupConfigSchema.partial().optional(),
+    channels: channelsSchema.optional(),
+    link_transforms: z.array(linkTransformSchema).optional(),
+  })
+  .strict();
 
 export const resolvedConfigSchema = z.object({
   cleanup: cleanupConfigSchema.default({ ttl_days: 90, max_records: 50_000 }),

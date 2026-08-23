@@ -1,25 +1,21 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { SubscriptionConfig } from "../config/schema.ts";
-import type { WachiDb } from "../db/connect.ts";
+import type { WachiDb, WachiDbSession } from "../db/connect.ts";
+import { admitDeliveryWithOutboxInTransaction } from "../db/delivery-ledger.ts";
 import { markHealthFailure } from "../db/mark-health-failure.ts";
-import { sendNotification } from "../notify/send.ts";
-import {
-  resolveSourceIdentity,
-  withLinkFallbackAvatar,
-} from "../subscriptions/resolve-source-identity.ts";
+import { serializeDeliverySource } from "../notify/delivery-source.ts";
 import type { CheckStats } from "./handle-items.ts";
-
-type QueueFn = (channelUrl: string, task: () => Promise<void>) => Promise<void>;
 
 const handleFailureOptionsSchema = z.object({
   channelName: z.string(),
-  effectiveChannelUrl: z.string(),
+  destinationId: z.number().int().positive(),
   subscription: z.custom<SubscriptionConfig>(),
   db: z.custom<WachiDb>(),
   dryRun: z.boolean(),
   stats: z.custom<CheckStats>(),
-  enqueueForChannel: z.custom<QueueFn>(),
   error: z.unknown(),
+  attemptGeneration: z.number().int().nonnegative(),
 });
 
 type HandleFailureOptions = z.infer<typeof handleFailureOptionsSchema>;
@@ -27,18 +23,17 @@ type HandleFailureOptions = z.infer<typeof handleFailureOptionsSchema>;
 export const toFailureMessage = (error: unknown): string =>
   error instanceof Error ? error.message : "check failed";
 
-const maybeSendFailureAlert = async (
+const maybeQueueFailureAlert = (
   failures: number,
+  attemptGeneration: number,
   subscription: SubscriptionConfig,
   message: string,
   channelName: string,
-  effectiveChannelUrl: string,
-  dryRun: boolean,
-  enqueueForChannel: QueueFn,
-  db: WachiDb,
-): Promise<void> => {
+  destinationId: number,
+  db: WachiDbSession,
+): void => {
   const isMilestone = failures > 100 && failures % 100 === 0;
-  if (!(failures === 10 || failures === 100 || isMilestone) || dryRun) {
+  if (!(failures === 10 || failures === 100 || isMilestone)) {
     return;
   }
 
@@ -47,48 +42,69 @@ const maybeSendFailureAlert = async (
       ? `wachi: subscription ${subscription.url} has failed 10 consecutive checks. Last error: ${message}`
       : `wachi: subscription ${subscription.url} has been failing for ${failures} consecutive checks. Consider removing it with wachi unsub -n "${channelName}".`;
 
-  try {
-    const baseIdentity = await resolveSourceIdentity({
+  const linkKey = createHash("sha256")
+    .update("wachi:failure-alert:v1\0")
+    .update(subscription.url)
+    .update("\0")
+    .update(String(failures))
+    .update("\0")
+    .update(String(attemptGeneration))
+    .digest();
+
+  admitDeliveryWithOutboxInTransaction(db, {
+    destinationId,
+    linkKey,
+    payload: body,
+    source: serializeDeliverySource({
+      channelName,
       subscriptionUrl: subscription.url,
-      rssUrl: subscription.rss_url,
-      db,
-      allowFeedFetch: false,
-    });
-    const sourceIdentity = withLinkFallbackAvatar(baseIdentity, subscription.url);
-    await enqueueForChannel(effectiveChannelUrl, async () => {
-      await sendNotification({
-        appriseUrl: effectiveChannelUrl,
-        body,
-        sourceIdentity,
-      });
-    });
-  } catch {
-    return;
-  }
+      title: `Subscription failure (${failures})`,
+      archiveLink: null,
+    }),
+    link: subscription.url,
+  });
 };
 
 export const handleSubscriptionFailure = async ({
   channelName,
-  effectiveChannelUrl,
+  destinationId,
   subscription,
   db,
   dryRun,
   stats,
-  enqueueForChannel,
   error,
+  attemptGeneration,
 }: HandleFailureOptions): Promise<void> => {
   const message = toFailureMessage(error);
-  const health = markHealthFailure(db, channelName, subscription.url, message);
+  if (dryRun) {
+    stats.errors.push(`${subscription.url}: ${message}`);
+    return;
+  }
 
-  await maybeSendFailureAlert(
-    health.consecutiveFailures,
-    subscription,
-    message,
-    channelName,
-    effectiveChannelUrl,
-    dryRun,
-    enqueueForChannel,
-    db,
+  db.transaction(
+    (tx) => {
+      const health = markHealthFailure(
+        tx,
+        channelName,
+        subscription.url,
+        message,
+        attemptGeneration,
+      );
+      if (health.attemptGeneration !== attemptGeneration) {
+        return;
+      }
+
+      maybeQueueFailureAlert(
+        health.consecutiveFailures,
+        health.attemptGeneration,
+        subscription,
+        message,
+        channelName,
+        destinationId,
+        tx,
+      );
+    },
+    { behavior: "immediate" },
   );
 
   stats.errors.push(`${subscription.url}: ${message}`);

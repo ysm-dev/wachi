@@ -152,16 +152,21 @@ describe("delivery ledger cutover", () => {
     const changed = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
 
     expect(baseline.exitCode).toBe(0);
-    expect(JSON.parse(baseline.stdout).data).toMatchObject({ sent: [], skipped: 2, errors: [] });
+    expect(JSON.parse(baseline.stdout).data).toMatchObject({
+      sent: expect.any(Array),
+      skipped: 0,
+      errors: [],
+    });
+    expect(JSON.parse(baseline.stdout).data.sent).toHaveLength(2);
     expect(unchanged.exitCode).toBe(0);
     expect(changed.exitCode).toBe(0);
     expect(JSON.parse(changed.stdout).data.sent).toHaveLength(2);
-    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(2);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(4);
     expect(requests).toBe(3);
     expect(conditionalHeaders).toEqual([null, '"shared-v1"', '"shared-v1"']);
   });
 
-  it("baselines older items and sends a new latest link once per destination", async () => {
+  it("sends all undated items once per destination rather than guessing the latest", async () => {
     const harness = await createHarness("wachi-e2e-delivery-latest-");
     const sharedLatest = "https://example.com/shared-latest";
     const server = Bun.serve({
@@ -218,11 +223,10 @@ describe("delivery ledger cutover", () => {
     expect(second.exitCode).toBe(0);
     expect(JSON.parse(second.stdout).data.baseline_count).toBe(1);
     const notifications = await readNotificationBodies(harness.appriseLogPath);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toContain(sharedLatest);
-    expect(notifications[0]).toContain("Shared Latest");
-    expect(notifications[0]).not.toContain("First Older");
-    expect(notifications[0]).not.toContain("Second Older");
+    expect(notifications).toHaveLength(3);
+    expect(notifications.join("\n")).toContain(sharedLatest);
+    expect(notifications.join("\n")).toContain("First Older");
+    expect(notifications.join("\n")).toContain("Second Older");
   });
 
   it("defers all current items with --send-existing until the next check", async () => {
@@ -284,7 +288,7 @@ describe("delivery ledger cutover", () => {
     expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(3);
   });
 
-  it("baselines a preconfigured database once before sending later items", async () => {
+  it("sends current items from a preconfigured database before sending later items", async () => {
     const harness = await createHarness("wachi-e2e-existing-cutover-");
     let feedXml = createFeed([
       { title: "Current", link: "https://example.com/current" },
@@ -321,8 +325,13 @@ describe("delivery ledger cutover", () => {
 
     const cutover = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
     expect(cutover.exitCode).toBe(0);
-    expect(JSON.parse(cutover.stdout).data).toMatchObject({ sent: [], skipped: 2, errors: [] });
-    expect(await readNotificationBodies(harness.appriseLogPath)).toEqual([]);
+    expect(JSON.parse(cutover.stdout).data).toMatchObject({
+      sent: expect.any(Array),
+      skipped: 0,
+      errors: [],
+    });
+    expect(JSON.parse(cutover.stdout).data.sent).toHaveLength(2);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(2);
 
     feedXml = createFeed([
       { title: "After Cutover", link: "https://example.com/after-cutover" },
@@ -343,8 +352,8 @@ describe("delivery ledger cutover", () => {
       },
     ]);
     const notifications = await readNotificationBodies(harness.appriseLogPath);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toContain("After Cutover");
+    expect(notifications).toHaveLength(3);
+    expect(notifications[2]).toContain("After Cutover");
   });
 
   it("does not add or send an alias resolving to an already prepared RSS URL", async () => {
@@ -401,8 +410,63 @@ describe("delivery ledger cutover", () => {
     expect(listed.exitCode).toBe(0);
     expect(JSON.parse(listed.stdout).data.channels[0].subscriptions).toHaveLength(1);
     const notifications = await readNotificationBodies(harness.appriseLogPath);
-    expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toContain("Alias Latest");
+    expect(notifications).toHaveLength(2);
+    expect(notifications.join("\n")).toContain("Alias Latest");
+  });
+
+  it("retries queued notifications after a channel destination changes", async () => {
+    const harness = await createHarness("wachi-e2e-destination-change-");
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          createFeed([{ title: "Must Survive", link: "https://example.com/must-survive" }]),
+          { headers: { "content-type": "application/rss+xml" } },
+        );
+      },
+    });
+    servers.push(server);
+    const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    await writeFile(
+      harness.configPath,
+      `channels:
+  - name: "main"
+    apprise_url: "slack://old-token/channel"
+    subscriptions:
+      - url: "${feedUrl}"
+        rss_url: "${feedUrl}"
+`,
+      "utf8",
+    );
+
+    const failed = await runCli(["check", "--json", "--config", harness.configPath], {
+      ...harness.env,
+      WACHI_TEST_APPRISE_FAIL_AT: "1",
+    });
+    expect(failed.exitCode).toBe(1);
+
+    await writeFile(
+      harness.configPath,
+      `channels:
+  - name: "main"
+    apprise_url: "slack://new-token/channel"
+    subscriptions:
+      - url: "${feedUrl}"
+        rss_url: "${feedUrl}"
+`,
+      "utf8",
+    );
+    const retried = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+
+    expect(retried.exitCode).toBe(0);
+    expect(JSON.parse(retried.stdout).data.sent).toEqual([
+      {
+        title: "Must Survive",
+        link: "https://example.com/must-survive",
+        channel_name: "main",
+      },
+    ]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(2);
   });
 
   it("returns 1 when the only delivery fails, then retries it on the next check", async () => {

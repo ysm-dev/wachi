@@ -90,9 +90,9 @@ export const sendNotification = async ({
   if (exitCode !== 0) {
     const stderr = await new Response(proc.stderr).text();
     throw new NotificationDeliveryError(
-      // A non-zero exit means apprise ran to completion and reported failure,
-      // so the message was definitively not delivered and is safe to retry.
-      "undelivered",
+      // Apprise may have reached one or more providers before reporting a
+      // failure. The outbox still retries this ambiguous result at-least-once.
+      "unknown",
       `Failed to send notification to ${maskAppriseUrl(appriseUrl)}`,
       stderr.trim() || "uvx apprise exited with an error.",
       "Verify the channel with `wachi test -n <name>`.",

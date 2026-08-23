@@ -2,12 +2,13 @@ import { z } from "zod";
 import type { WachiDb } from "../db/connect.ts";
 import { getMetaValue } from "../db/get-meta-value.ts";
 import { setMetaValue } from "../db/set-meta-value.ts";
-import { http } from "../http/client.ts";
+import { fetchBoundedText } from "../http/client.ts";
 import { waitForDomainRateLimit } from "../http/rate-limit.ts";
 import { extractWebsiteBranding } from "./source-branding.ts";
 
 const BRANDING_CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 const BRANDING_FETCH_TIMEOUT_MS = 2_000;
+const BRANDING_FETCH_MAX_BYTES = 1024 * 1024;
 
 const cachedWebsiteBrandingSchema = z.object({
   fetchedAt: z.string(),
@@ -67,17 +68,15 @@ const setCachedWebsiteBranding = (
 const fetchWebsiteBranding = async (subscriptionUrl: string): Promise<WebsiteBranding> => {
   try {
     await waitForDomainRateLimit(subscriptionUrl);
-    const response = await http.raw(subscriptionUrl, {
-      responseType: "text",
-      ignoreResponseError: true,
-      timeout: BRANDING_FETCH_TIMEOUT_MS,
+    const response = await fetchBoundedText(subscriptionUrl, {
+      timeoutMs: BRANDING_FETCH_TIMEOUT_MS,
+      maxBytes: BRANDING_FETCH_MAX_BYTES,
       retry: 0,
     });
     if (response.status >= 400) {
       return { title: null, faviconUrl: null };
     }
-    const html = typeof response._data === "string" ? response._data : "";
-    return extractWebsiteBranding(subscriptionUrl, html);
+    return extractWebsiteBranding(response.url, response.body);
   } catch {
     return { title: null, faviconUrl: null };
   }

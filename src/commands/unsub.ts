@@ -2,9 +2,7 @@ import { defineCommand } from "citty";
 import { z } from "zod";
 import { printJsonSuccess, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
-import { readConfig } from "../lib/config/read.ts";
-
-import { writeConfig } from "../lib/config/write.ts";
+import { mutateConfig } from "../lib/config/mutate.ts";
 import { normalizeUrl } from "../lib/url/normalize.ts";
 import {
   commandJson,
@@ -20,6 +18,11 @@ const unsubArgsSchema = z.object({
   verbose: z.boolean().optional(),
   config: z.string().optional(),
 });
+
+type UnsubMutationResult =
+  | { kind: "missing"; removed: number }
+  | { kind: "channel"; removed: number; channelName: string }
+  | { kind: "subscription"; removed: number; channelName: string };
 
 export const unsubCommand = defineCommand({
   meta: {
@@ -46,14 +49,51 @@ export const unsubCommand = defineCommand({
       const channelName = parsedArgs.name.trim();
       const channelNameKey = toChannelNameKey(channelName);
 
-      const configState = await readConfig(parsedArgs.config);
-      const nextRaw = structuredClone(configState.rawConfig);
-      const channels = nextRaw.channels ?? [];
+      const normalized = parsedArgs.url ? normalizeUrl(parsedArgs.url).url : undefined;
+      const mutation = await mutateConfig<UnsubMutationResult>(parsedArgs.config, (nextRaw) => {
+        const channels = nextRaw.channels ?? [];
+        const channelIndex = channels.findIndex(
+          (channel) => toChannelNameKey(channel.name) === channelNameKey,
+        );
+        const channel = channels[channelIndex];
+        if (channelIndex === -1 || !channel) {
+          return { result: { kind: "missing" as const, removed: 0 } };
+        }
 
-      const channelIndex = channels.findIndex(
-        (channel) => toChannelNameKey(channel.name) === channelNameKey,
-      );
-      if (channelIndex === -1) {
+        if (!normalized) {
+          const removed = channel.subscriptions.length;
+          channels.splice(channelIndex, 1);
+          nextRaw.channels = channels;
+          return {
+            config: nextRaw,
+            result: { kind: "channel" as const, removed, channelName: channel.name },
+          };
+        }
+
+        const previousCount = channel.subscriptions.length;
+        channel.subscriptions = channel.subscriptions.filter((subscription) => {
+          if (subscription.url === normalized) {
+            return false;
+          }
+          return subscription.rss_url !== normalized;
+        });
+        const removed = previousCount - channel.subscriptions.length;
+        if (removed === 0) {
+          return {
+            result: { kind: "subscription" as const, removed, channelName: channel.name },
+          };
+        }
+        if (channel.subscriptions.length === 0) {
+          channels.splice(channelIndex, 1);
+        }
+        nextRaw.channels = channels;
+        return {
+          config: nextRaw,
+          result: { kind: "subscription" as const, removed, channelName: channel.name },
+        };
+      });
+
+      if (mutation.result.kind === "missing") {
         if (commandJson(parsedArgs)) {
           printJsonSuccess({ removed: 0 });
         } else {
@@ -62,46 +102,24 @@ export const unsubCommand = defineCommand({
         return 0;
       }
 
-      const channel = channels[channelIndex];
-      if (!channel) {
-        return 0;
-      }
-
-      if (!parsedArgs.url) {
-        const removedCount = channel.subscriptions.length;
-        channels.splice(channelIndex, 1);
-        nextRaw.channels = channels;
-        await writeConfig({ config: nextRaw, path: configState.path, format: configState.format });
-
+      if (mutation.result.kind === "channel") {
         if (commandJson(parsedArgs)) {
-          printJsonSuccess({ removed_channel: true, removed_subscriptions: removedCount });
+          printJsonSuccess({
+            removed_channel: true,
+            removed_subscriptions: mutation.result.removed,
+          });
         } else {
-          printStdout(`Removed channel ${channel.name} (${removedCount} subscriptions)`);
+          printStdout(
+            `Removed channel ${mutation.result.channelName} (${mutation.result.removed} subscriptions)`,
+          );
         }
         return 0;
       }
-
-      const normalized = normalizeUrl(parsedArgs.url).url;
-      const previousCount = channel.subscriptions.length;
-      channel.subscriptions = channel.subscriptions.filter((subscription) => {
-        if (subscription.url === normalized) {
-          return false;
-        }
-        return subscription.rss_url !== normalized;
-      });
-
-      if (channel.subscriptions.length === 0) {
-        channels.splice(channelIndex, 1);
-      }
-
-      const removed = previousCount - channel.subscriptions.length;
-      nextRaw.channels = channels;
-      await writeConfig({ config: nextRaw, path: configState.path, format: configState.format });
 
       if (commandJson(parsedArgs)) {
-        printJsonSuccess({ removed });
-      } else if (removed > 0) {
-        printStdout(`Removed: ${normalized} from ${channel.name}`);
+        printJsonSuccess({ removed: mutation.result.removed });
+      } else if (mutation.result.removed > 0) {
+        printStdout(`Removed: ${normalized} from ${mutation.result.channelName}`);
       } else {
         printStdout(`Subscription not found: ${normalized}`);
       }

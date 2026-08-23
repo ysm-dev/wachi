@@ -1,12 +1,12 @@
 import { and, eq } from "drizzle-orm";
-import type { WachiDb } from "./connect.ts";
+import type { WachiDbSession } from "./connect.ts";
 import { health } from "./schema.ts";
 import { type HealthRow, healthSelectSchema } from "./zod.ts";
 
 export type HealthState = HealthRow;
 
 export const getHealthState = (
-  db: WachiDb,
+  db: WachiDbSession,
   channelUrl: string,
   subscriptionUrl: string,
 ): HealthState => {
@@ -24,6 +24,8 @@ export const getHealthState = (
       consecutiveFailures: 0,
       lastError: null,
       lastFailureAt: null,
+      lastAttemptAt: null,
+      attemptGeneration: 0,
     };
   }
 
@@ -35,6 +37,8 @@ export const getHealthState = (
       consecutiveFailures: 0,
       lastError: null,
       lastFailureAt: null,
+      lastAttemptAt: null,
+      attemptGeneration: 0,
     };
   }
 

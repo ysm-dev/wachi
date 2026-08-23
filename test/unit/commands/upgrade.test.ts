@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -193,6 +194,7 @@ describe("upgradeCommand", () => {
               {
                 name: releaseAssetName,
                 browser_download_url: `https://example.com/${releaseAssetName}`,
+                digest: `sha256:${createHash("sha256").update("new-binary").digest("hex")}`,
               },
             ],
           }),
