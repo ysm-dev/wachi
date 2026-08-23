@@ -1,6 +1,6 @@
 {
   "name": "@wachi-cli/linux-x64",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ysm-dev/wachi.git",
