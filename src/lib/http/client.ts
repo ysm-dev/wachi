@@ -79,43 +79,38 @@ const readBoundedBody = async (response: Response, maxBytes: number): Promise<st
   }
 };
 
-const requestPinned = async (
+const requestPinnedAddress = async (
   url: string,
-  addresses: SafeResolvedAddress[],
+  address: SafeResolvedAddress,
   headers: HeadersInit | undefined,
   signal: AbortSignal,
+  connectionTimeoutMs: number,
 ): Promise<Response> => {
   const parsedUrl = new URL(url);
+  // Bun 1.3.10 loses TLS hostname context when https.request uses a custom
+  // lookup. Connect to the validated IP directly while preserving Host/SNI.
+  const connectionUrl = new URL(parsedUrl);
+  connectionUrl.hostname = address.family === 6 ? `[${address.address}]` : address.address;
+  const tlsHostname = parsedUrl.hostname.replace(/^\[(.*)\]$/, "$1");
   const requestHeaders = new Headers(headers);
   requestHeaders.set("User-Agent", `wachi/${VERSION}`);
   requestHeaders.set("Accept-Encoding", "gzip, deflate, br");
+  // Bun 1.3.10 incorrectly includes a non-default HTTPS port in certificate
+  // hostname verification, so keep the TLS Host header port-free.
+  requestHeaders.set("Host", parsedUrl.protocol === "https:" ? parsedUrl.hostname : parsedUrl.host);
 
   return new Promise<Response>((resolve, reject) => {
+    let connectionTimeout: ReturnType<typeof setTimeout>;
+    const clearConnectionTimeout = () => clearTimeout(connectionTimeout);
     const request = (parsedUrl.protocol === "https:" ? requestHttps : requestHttp)(
-      parsedUrl,
+      connectionUrl,
       {
         headers: Object.fromEntries(requestHeaders.entries()),
         signal,
-        lookup: (_hostname, options, callback) => {
-          if (typeof options !== "number" && options.all) {
-            const reply = callback as (
-              error: null,
-              resolved: Array<{ address: string; family: number }>,
-            ) => void;
-            reply(null, addresses);
-            return;
-          }
-          const selected = addresses[0];
-          if (!selected) {
-            const reply = callback as (error: Error) => void;
-            reply(new Error("No validated address is available."));
-            return;
-          }
-          const reply = callback as (error: null, address: string, family: number) => void;
-          reply(null, selected.address, selected.family);
-        },
+        servername: tlsHostname,
       },
       (incoming) => {
+        clearConnectionTimeout();
         const hasBody = incoming.statusCode !== 204 && incoming.statusCode !== 304;
         let body: Readable = incoming;
         const contentEncoding = incoming.headers["content-encoding"]?.toLowerCase();
@@ -154,9 +149,37 @@ const requestPinned = async (
         );
       },
     );
-    request.once("error", reject);
+    connectionTimeout = setTimeout(() => {
+      request.destroy(new Error(`Timed out connecting to ${address.address}.`));
+    }, connectionTimeoutMs);
+    request.once("error", (error) => {
+      clearConnectionTimeout();
+      reject(error);
+    });
     request.end();
   });
+};
+
+const requestPinned = async (
+  url: string,
+  addresses: SafeResolvedAddress[],
+  headers: HeadersInit | undefined,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<Response> => {
+  let lastError: unknown;
+  const addressTimeoutMs = Math.max(250, Math.floor(timeoutMs / addresses.length));
+  for (const address of addresses) {
+    try {
+      return await requestPinnedAddress(url, address, headers, signal, addressTimeoutMs);
+    } catch (error) {
+      if (signal.aborted) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+  throw lastError ?? new Error("No validated address is available.");
 };
 
 const waitForRetryDelay = async (delayMs: number, signal: AbortSignal): Promise<void> => {
@@ -219,6 +242,7 @@ export const fetchBoundedText = async (
         resolvedAddresses,
         headers,
         controller.signal,
+        timeoutMs,
       );
 
       if (allowedRetryStatuses.has(response.status) && remainingRetries > 0) {

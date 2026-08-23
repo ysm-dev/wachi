@@ -11,9 +11,11 @@ afterEach(() => {
 
 describe("fetchBoundedText", () => {
   it("fetches an explicitly requested local hostname through pinned DNS", async () => {
+    let receivedHost = "";
     const server = Bun.serve({
       port: 0,
-      fetch() {
+      fetch(request) {
+        receivedHost = request.headers.get("host") ?? "";
         return new Response("ok");
       },
     });
@@ -26,6 +28,7 @@ describe("fetchBoundedText", () => {
     });
 
     expect(response.body).toBe("ok");
+    expect(receivedHost).toBe(`localhost:${server.port}`);
   });
 
   it("finishes a bodyless 304 response", async () => {
