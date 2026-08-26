@@ -283,11 +283,7 @@ export const subCommand = defineCommand({
             subscriptionUrl: prepared.subscription.url,
             rssUrl: prepared.subscription.rss_url,
           });
-          const publishedDates = prepared.baselineItems.map((item) => item.publishedAt);
-          const latestIsUnambiguous =
-            publishedDates.every((date): date is string => date !== null) &&
-            new Set(publishedDates).size === publishedDates.length;
-          const olderItems = latestIsUnambiguous ? prepared.baselineItems.slice(0, -1) : [];
+          const olderItems = prepared.baselineItems.slice(0, -1);
           baselineCount += await handleSubscriptionItems({
             items: olderItems,
             channelName: latestChannelIdentity,
@@ -304,9 +300,7 @@ export const subCommand = defineCommand({
             appriseUrl: effectiveChannelUrl,
           });
 
-          const itemsToNotify = latestIsUnambiguous
-            ? prepared.baselineItems.slice(-1)
-            : prepared.baselineItems;
+          const itemsToNotify = prepared.baselineItems.slice(-1);
           if (itemsToNotify.length > 0) {
             baselineCount += await handleSubscriptionItems({
               items: itemsToNotify,

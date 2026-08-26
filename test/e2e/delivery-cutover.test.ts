@@ -166,7 +166,7 @@ describe("delivery ledger cutover", () => {
     expect(conditionalHeaders).toEqual([null, '"shared-v1"', '"shared-v1"']);
   });
 
-  it("sends all undated items once per destination rather than guessing the latest", async () => {
+  it("baselines older undated items and sends only the top item per destination", async () => {
     const harness = await createHarness("wachi-e2e-delivery-latest-");
     const sharedLatest = "https://example.com/shared-latest";
     const server = Bun.serve({
@@ -223,10 +223,16 @@ describe("delivery ledger cutover", () => {
     expect(second.exitCode).toBe(0);
     expect(JSON.parse(second.stdout).data.baseline_count).toBe(1);
     const notifications = await readNotificationBodies(harness.appriseLogPath);
-    expect(notifications).toHaveLength(3);
-    expect(notifications.join("\n")).toContain(sharedLatest);
-    expect(notifications.join("\n")).toContain("First Older");
-    expect(notifications.join("\n")).toContain("Second Older");
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toContain(sharedLatest);
+    expect(notifications[0]).toContain("Shared Latest");
+    expect(notifications[0]).not.toContain("First Older");
+    expect(notifications[0]).not.toContain("Second Older");
+
+    const check = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    expect(check.exitCode).toBe(0);
+    expect(JSON.parse(check.stdout).data.sent).toEqual([]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(1);
   });
 
   it("defers all current items with --send-existing until the next check", async () => {
@@ -410,8 +416,9 @@ describe("delivery ledger cutover", () => {
     expect(listed.exitCode).toBe(0);
     expect(JSON.parse(listed.stdout).data.channels[0].subscriptions).toHaveLength(1);
     const notifications = await readNotificationBodies(harness.appriseLogPath);
-    expect(notifications).toHaveLength(2);
-    expect(notifications.join("\n")).toContain("Alias Latest");
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toContain("Alias Latest");
+    expect(notifications[0]).not.toContain("Alias Older");
   });
 
   it("retries queued notifications after a channel destination changes", async () => {
