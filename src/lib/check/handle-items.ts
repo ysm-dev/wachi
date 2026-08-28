@@ -125,6 +125,20 @@ export const handleSubscriptionItems = async ({
     preparedItems.push({ item, canonicalLink, linkKey });
   }
 
+  if (baseline) {
+    if (dryRun) {
+      stats.skipped += preparedItems.length;
+      return 0;
+    }
+    accepted = admitDeliveryKeys(
+      db,
+      destinationId,
+      preparedItems.map(({ linkKey }) => linkKey),
+    );
+    stats.skipped += preparedItems.length;
+    return accepted;
+  }
+
   if (dryRun) {
     for (const { item, linkKey } of preparedItems) {
       if (hasDeliveryKey(db, destinationId, linkKey)) {
@@ -137,16 +151,6 @@ export const handleSubscriptionItems = async ({
         printStdout(`[dry-run] would send: ${item.title} -> ${channelName}`);
       }
     }
-    return accepted;
-  }
-
-  if (baseline) {
-    accepted = admitDeliveryKeys(
-      db,
-      destinationId,
-      preparedItems.map(({ linkKey }) => linkKey),
-    );
-    stats.skipped += preparedItems.length;
     return accepted;
   }
 

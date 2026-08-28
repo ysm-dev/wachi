@@ -3,6 +3,7 @@ import { z } from "zod";
 import { flushArchivePool } from "../lib/archive/pool.ts";
 import { markDeliveryCutover } from "../lib/check/delivery-cutover.ts";
 import { drainDestinationOutbox } from "../lib/check/drain-outbox.ts";
+import { markFeedBackfillPending, recordFeedContinuity } from "../lib/check/feed-continuity.ts";
 import { type CheckStats, handleSubscriptionItems } from "../lib/check/handle-items.ts";
 import { printJsonSuccess, printStderr, printStdout } from "../lib/cli/io.ts";
 import { toChannelNameKey } from "../lib/config/channel-name-key.ts";
@@ -328,6 +329,16 @@ export const subCommand = defineCommand({
           }
         }
 
+        if (sendExisting) {
+          markFeedBackfillPending(db, destinationId, prepared.subscription.rss_url);
+        } else {
+          recordFeedContinuity(
+            db,
+            destinationId,
+            prepared.subscription.rss_url,
+            prepared.baselineItems,
+          );
+        }
         markDeliveryCutover(db, destinationId, prepared.subscription.rss_url);
         if (stats.errors.length > 0 && !isJson) {
           printStderr(`Warning: ${stats.errors.join("; ")}`);

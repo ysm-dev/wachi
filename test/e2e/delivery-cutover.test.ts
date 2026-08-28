@@ -6,6 +6,7 @@ import { join } from "node:path";
 type FeedItem = {
   title: string;
   link: string;
+  publishedAt?: string;
 };
 
 const runCli = async (args: string[], env: NodeJS.ProcessEnv = {}) => {
@@ -29,7 +30,7 @@ const createFeed = (items: FeedItem[]): string => {
   const entries = items
     .map(
       (item) =>
-        `<item><title>${item.title}</title><link>${item.link}</link><guid>${item.link}</guid></item>`,
+        `<item><title>${item.title}</title><link>${item.link}</link><guid>${item.link}</guid>${item.publishedAt ? `<pubDate>${item.publishedAt}</pubDate>` : ""}</item>`,
     )
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -360,6 +361,102 @@ describe("delivery ledger cutover", () => {
     const notifications = await readNotificationBodies(harness.appriseLogPath);
     expect(notifications).toHaveLength(3);
     expect(notifications[2]).toContain("After Cutover");
+  });
+
+  it("quarantines a historical feed replacement without enqueueing its 100 items", async () => {
+    const harness = await createHarness("wachi-e2e-feed-continuity-");
+    let feedItems: FeedItem[] = [
+      {
+        title: "Current",
+        link: "https://example.com/current",
+        publishedAt: "Sat, 01 Aug 2026 00:00:00 GMT",
+      },
+      {
+        title: "Older",
+        link: "https://example.com/older",
+        publishedAt: "Wed, 01 Jul 2026 00:00:00 GMT",
+      },
+    ];
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(createFeed(feedItems), {
+          headers: { "content-type": "application/rss+xml" },
+        });
+      },
+    });
+    servers.push(server);
+    const feedUrl = `http://127.0.0.1:${server.port}/feed.xml`;
+    await writeFile(
+      harness.configPath,
+      `channels:
+  - name: "main"
+    apprise_url: "slack://token/channel"
+    subscriptions:
+      - url: "${feedUrl}"
+        rss_url: "${feedUrl}"
+`,
+      "utf8",
+    );
+
+    const baseline = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    expect(baseline.exitCode).toBe(0);
+    expect(JSON.parse(baseline.stdout).data.sent).toHaveLength(2);
+
+    feedItems = [
+      {
+        title: "New",
+        link: "https://example.com/new",
+        publishedAt: "Sun, 02 Aug 2026 00:00:00 GMT",
+      },
+      ...feedItems,
+    ];
+    const normal = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    expect(normal.exitCode).toBe(0);
+    expect(JSON.parse(normal.stdout).data.sent).toHaveLength(1);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(3);
+
+    feedItems = Array.from({ length: 100 }, (_, index) => ({
+      title: `Historical ${index}`,
+      link: `https://example.com/historical-${index}`,
+      publishedAt: new Date(Date.UTC(2025, 0, index + 1)).toUTCString(),
+    }));
+    const anomalous = await runCli(
+      ["check", "--json", "--config", harness.configPath],
+      harness.env,
+    );
+    const anomalousPayload = JSON.parse(anomalous.stdout);
+    expect(anomalous.exitCode).toBe(1);
+    expect(anomalousPayload.data.sent).toEqual([]);
+    expect(anomalousPayload.data.errors).toHaveLength(1);
+    expect(anomalousPayload.data.errors[0]).toContain("Feed continuity lost");
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(3);
+
+    feedItems = [
+      {
+        title: "Recovered",
+        link: "https://example.com/recovered",
+        publishedAt: "Mon, 03 Aug 2026 00:00:00 GMT",
+      },
+      {
+        title: "New",
+        link: "https://example.com/new",
+        publishedAt: "Sun, 02 Aug 2026 00:00:00 GMT",
+      },
+    ];
+    const recovered = await runCli(
+      ["check", "--json", "--config", harness.configPath],
+      harness.env,
+    );
+    expect(recovered.exitCode).toBe(0);
+    expect(JSON.parse(recovered.stdout).data.sent).toEqual([
+      {
+        title: "Recovered",
+        link: "https://example.com/recovered",
+        channel_name: "main",
+      },
+    ]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(4);
   });
 
   it("does not add or send an alias resolving to an already prepared RSS URL", async () => {
