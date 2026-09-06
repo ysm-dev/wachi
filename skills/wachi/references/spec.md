@@ -199,11 +199,13 @@ Error: <what happened>
 
 | Failures | Action |
 |----------|--------|
-| 1-2 | Silent, logged internally |
-| 3 | Notify user |
-| 10+ | Notify user to consider `wachi unsub` |
+| 1-9 | Silent, logged internally |
+| 10 | Notify user with the last error |
+| 100, then every 100 | Notify user to consider `wachi unsub` |
 
 Counter resets to 0 on any successful check.
+
+Correlated DNS, connection, TLS, or timeout failures are treated as a runner network outage when they affect at least half of a run with at least five subscriptions and span three hostnames. These inconclusive failures remain visible in command output but do not increment subscription counters or enqueue alerts. HTTP, parsing, and single-host failures are recorded normally. Recovered subscription-failure alerts are removed from the outbox before dispatch.
 
 ## Auto-Update
 

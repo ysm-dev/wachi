@@ -11,6 +11,9 @@ import {
   resolveDestinationId,
 } from "../../../../src/lib/db/delivery-ledger.ts";
 import { claimNextDelivery, listDeliveryOutbox } from "../../../../src/lib/db/delivery-outbox.ts";
+import { beginHealthAttempt } from "../../../../src/lib/db/health-attempt.ts";
+import { markHealthFailure } from "../../../../src/lib/db/mark-health-failure.ts";
+import { markHealthSuccess } from "../../../../src/lib/db/mark-health-success.ts";
 import { serializeDeliverySource } from "../../../../src/lib/notify/delivery-source.ts";
 import { resetSendNotificationStateForTest } from "../../../../src/lib/notify/send.ts";
 
@@ -82,6 +85,28 @@ const admit = (db: Db, destinationId: number, n: number): void => {
       archiveLink: `https://example.com/${n}`,
     }),
     link: `https://example.com/${n}`,
+  });
+};
+
+const admitFailureAlert = (
+  db: Db,
+  destinationId: number,
+  failureCount: number,
+  legacy = false,
+): void => {
+  admitDeliveryWithOutbox(db, {
+    destinationId,
+    linkKey: key(failureCount),
+    payload: `failed ${failureCount} times`,
+    source: serializeDeliverySource({
+      kind: legacy ? undefined : "subscription-failure",
+      channelName: "main",
+      subscriptionUrl: "https://example.com/feed",
+      title: `Subscription failure (${failureCount})`,
+      archiveLink: null,
+      failureCount,
+    }),
+    link: "https://example.com/feed",
   });
 };
 
@@ -162,6 +187,56 @@ describe("drainDestinationOutbox", () => {
         channel_name: "unknown",
       },
     ]);
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
+  });
+
+  it("drops a queued failure alert after the subscription recovers", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    const generation = beginHealthAttempt(db, "main", "https://example.com/feed");
+    markHealthFailure(db, "main", "https://example.com/feed", "boom", generation);
+    admitFailureAlert(db, destinationId, 1);
+    markHealthSuccess(db, "main", "https://example.com/feed");
+
+    const stats = await drain(db, destinationId);
+
+    expect(dispatchedBodies).toEqual([]);
+    expect(stats.sent).toEqual([]);
+    expect(stats.errors).toEqual([]);
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
+    expect(listDeliveryKeys(db, destinationId)).toHaveLength(1);
+  });
+
+  it("drops a recovered failure alert queued by an older wachi version", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    admitFailureAlert(db, destinationId, 10, true);
+
+    await drain(db, destinationId);
+
+    expect(dispatchedBodies).toEqual([]);
+    expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
+  });
+
+  it("delivers a queued failure alert while the failure streak remains active", async () => {
+    const db = connection?.db;
+    if (!db) {
+      throw new Error("db not initialized");
+    }
+    const destinationId = resolveDestinationId(db, key(1));
+    markHealthFailure(db, "main", "https://example.com/feed", "boom");
+    admitFailureAlert(db, destinationId, 1);
+
+    const stats = await drain(db, destinationId);
+
+    expect(dispatchedBodies).toEqual(["failed 1 times"]);
+    expect(stats.sent).toHaveLength(1);
     expect(listDeliveryOutbox(db, destinationId)).toHaveLength(0);
   });
 

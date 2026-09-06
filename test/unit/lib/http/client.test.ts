@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { NetworkLevelError } from "../../../../src/lib/http/check-connectivity.ts";
 import { fetchBoundedText } from "../../../../src/lib/http/client.ts";
 
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
@@ -120,5 +121,19 @@ describe("fetchBoundedText", () => {
         retry: 0,
       }),
     ).rejects.toBeInstanceOf(Error);
+  });
+
+  it("classifies connection failures as network-level errors", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const port = server.port ?? 0;
+    server.stop();
+
+    await expect(
+      fetchBoundedText(`http://127.0.0.1:${port}`, {
+        timeoutMs: 1_000,
+        maxBytes: 32,
+        retry: 0,
+      }),
+    ).rejects.toBeInstanceOf(NetworkLevelError);
   });
 });

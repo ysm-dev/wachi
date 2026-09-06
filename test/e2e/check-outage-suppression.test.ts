@@ -82,6 +82,20 @@ ${paths.slice(half).map(toEntry).join("\n")}
   await writeFile(path, text, "utf8");
 };
 
+const writeUnavailableConfig = async (path: string): Promise<void> => {
+  const subscriptions = Array.from({ length: 6 }, (_, index) => {
+    const url = `https://feed-${index}.invalid/rss.xml`;
+    return `      - url: "${url}"\n        rss_url: "${url}"`;
+  });
+  const text = `channels:
+  - name: "offline"
+    apprise_url: "slack://token/offline"
+    subscriptions:
+${subscriptions.join("\n")}
+`;
+  await writeFile(path, text, "utf8");
+};
+
 const setup = async (prefix: string) => {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   dirs.push(dir);
@@ -92,7 +106,24 @@ const setup = async (prefix: string) => {
 };
 
 describe("wachi check run-level outage correlation", () => {
-  it("does not mutate failure counters during outage dry-runs", async () => {
+  it("suppresses transport failures across independent hosts", async () => {
+    const { configPath, env } = await setup("wachi-e2e-network-outage-");
+    await writeUnavailableConfig(configPath);
+
+    const result = await runCli(["check", "--json", "--config", configPath], env);
+    const payload = JSON.parse(result.stdout);
+
+    expect(payload.data.outage_suspected).toBe(true);
+    expect(payload.data.network_skipped).toBe(6);
+    expect(payload.data.suppressed).toBe(6);
+    expect(payload.data.errors).toHaveLength(6);
+    expect(result.exitCode).toBe(1);
+
+    const listed = await runCli(["ls", "--config", configPath], env);
+    expect(listed.stdout).not.toContain("failures");
+  }, 30_000);
+
+  it("does not mistake widespread HTTP errors for a runner outage", async () => {
     const server = startServer();
     const { configPath, env } = await setup("wachi-e2e-outage-");
     const paths = ["/f1.xml", "/f2.xml", "/f3.xml", "/f4.xml", "/f5.xml", "/f6.xml"];
@@ -102,7 +133,8 @@ describe("wachi check run-level outage correlation", () => {
     for (let run = 0; run < 12; run++) {
       const result = await runCli(["check", "--json", "--dry-run", "--config", configPath], env);
       const payload = JSON.parse(result.stdout);
-      expect(payload.data.outage_suspected).toBe(true);
+      expect(payload.data.outage_suspected).toBe(false);
+      expect(payload.data.suppressed).toBe(0);
       // Errors stay truthful so cron still sees a non-zero exit.
       expect(payload.data.errors.length).toBe(6);
       expect(result.exitCode).toBe(1);

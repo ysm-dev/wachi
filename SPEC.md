@@ -491,6 +491,8 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 
 If delivery fails before dispatch starts, the outbox row returns to pending with backoff. Once dispatch starts, any timeout, crash, or nonzero result is ambiguous and becomes `uncertain`; it is not retried automatically because the provider may already have accepted it. The permanent delivery key is never removed.
 
+Before dispatching a queued subscription-failure alert, wachi re-reads the subscription health row. If the recorded failure streak is now below the alert's threshold, the recovered alert is removed without being sent. Ordinary item deliveries are never discarded by this health check.
+
 ### `wachi test` Command
 
 Sends a fixed test message: `wachi test notification -- if you see this, your notification channel is working.`
@@ -617,43 +619,45 @@ All zod validation errors are wrapped with `zod-validation-error` for human-read
 
 ### Outage Suppression
 
-Failures are correlated before they are acted on, from coarsest to finest: run level, then host level. A failure matched by either check is reported in the run summary but does not increment `consecutive_failures` and does not raise an alert.
+Transport failures are correlated across independent hosts before they are acted on. A transport failure matched by the run-level check is reported in the run summary but does not increment `consecutive_failures` and does not raise an alert. HTTP responses, parsing failures, and failures concentrated on one external host remain actionable.
 
 #### Run-Level Outage Suppression
 
-Per-request error classification cannot reliably tell "this feed is broken" from "my network is broken". A dead DNS resolver, a captive portal, a saturated uplink, or a VPN each produce errors that look like ordinary feed failures, and the local-connectivity probe does not catch them: it targets an IP literal (so it survives DNS failure), it answers well inside its timeout on a congested link, and it is never consulted at all when a captive portal returns a real HTTP status.
+The bounded HTTP client classifies failures that occur before an HTTP response as DNS, connection, TLS, or timeout failures. HTTP status responses and feed parsing failures are not network-level failures.
 
-Correlation across subscriptions is a far stronger signal. Independent hosts do not fail together; when they appear to, the common factor is the machine running the check.
+Classification alone cannot reliably tell "this server is unreachable" from "my network is broken". Correlation across independent hosts provides the second signal: unrelated hosts do not ordinarily become unreachable together.
 
 A run is therefore treated as an environment problem when **both** hold:
 
 - at least **5** subscriptions were attempted in the run, and
-- at least **50%** of them failed.
+- network-level failures span at least **3 distinct hostnames**, and
+- at least **50%** of attempted subscriptions had network-level failures.
 
 In that case wachi:
 
-- does **not** increment `consecutive_failures` for any subscription
-- does **not** send any failure alerts
+- does **not** increment `consecutive_failures` for the correlated network-level failures
+- does **not** send alerts for those network-level failures
+- **does** record HTTP, parsing, and other feed-specific failures normally
 - **does** still report the errors in the run summary, `--json` output and exit code, so scheduled runs stay honest
 
-Because the ratio can only be known once every subscription has been attempted, failure handling is deferred until the check phase completes. All failures count toward the ratio, including ones the connectivity probe would have classified as network-level; excluding them would let a mixed outage slip under the threshold.
+Because the ratio can only be known once every subscription has been attempted, failure handling is deferred until the check phase completes.
 
 Below the 5-subscription minimum the ratio is not meaningful, so failures are always handled individually.
 
-#### Host-Level Outage Suppression
+#### Host-Level Outage Correlation
 
 A single backend commonly serves many subscriptions: a self-hosted RSSHub or torss instance, or any large public host. That backend is a single point of failure for everything behind it. When it stops, those subscriptions do not represent N broken feeds spread across N channels; they represent one process that is not running.
 
-Such an outage does not need to be a large share of the run. A self-hosted service can back 15% of all subscriptions while spanning half the channels, which stays well under the run-level threshold while still producing a channel-wide flood.
+Such an outage does not need to be a large share of the run. It is therefore reported separately in human and JSON summaries.
 
-Subscriptions are therefore grouped by the **host of `rss_url`, including the port**. The port matters: one machine routinely runs several unrelated feed services on localhost, and one dying must not implicate the others.
+Subscriptions are grouped by the **host of `rss_url`, including the port**. The port matters: one machine routinely runs several unrelated feed services on localhost, and one dying must not implicate the others.
 
 A host is treated as down when **both** hold:
 
 - at least **3** of its subscriptions were attempted in the run, and
 - **all** of them failed.
 
-Requiring every subscription on the host to fail is what keeps real breakage visible: one dead route on a healthy host still fails alone and still alerts normally. The 3-subscription minimum keeps "every subscription on this host failed" distinguishable from "the one feed on this host is broken".
+Requiring every subscription on the host to fail keeps the correlation meaningful: one dead route on a healthy host still appears as an isolated failure. Host-level correlation does **not** suppress counters or alerts because the outage is external to the wachi runner.
 
 ### Health Counter Reset
 
@@ -667,7 +671,8 @@ The `consecutive_failures` counter resets to 0 on **any successful check** (RSS 
 - Ambiguous post-dispatch failure: retain an uncertain row and never retry automatically
 - Check succeeds: reset `consecutive_failures` to 0
 - Check fails (HTTP error, timeout, parse error): increment failure counter, no delivery-key changes
-- Run-level or host-level outage suspected: leave the affected failure counters untouched, no delivery-key changes
+- Runner network outage suspected: leave correlated network-failure counters untouched, no delivery-key changes
+- External host outage suspected: record failures and alerts normally
 
 ## Security
 

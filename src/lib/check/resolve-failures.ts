@@ -1,9 +1,8 @@
 import { z } from "zod";
 import type { WachiDb } from "../db/connect.ts";
-import { isNetworkAvailable } from "../http/check-connectivity.ts";
 import { countByHost, findOutagedHosts } from "./detect-host-outage.ts";
 import { isRunOutageSuspected } from "./detect-run-outage.ts";
-import { handleSubscriptionFailure } from "./handle-failure.ts";
+import { handleSubscriptionFailure, toFailureMessage } from "./handle-failure.ts";
 import type { CheckStats } from "./handle-items.ts";
 import type { PendingFailure } from "./process-subscription.ts";
 
@@ -30,11 +29,11 @@ export type ResolveFailuresResult = {
  *
  * Two correlations are checked, from coarsest to finest:
  *
- * 1. Most of the run failed -> this machine has a problem.
+ * 1. Transport requests across several hosts failed -> this machine has a problem.
  * 2. Every subscription behind one host failed -> that host has a problem.
  *
- * Correlation is retained for the run summary, but every failure is recorded.
- * Missing an alert is worse than sending several alerts for one shared outage.
+ * Runner-level transport failures are inconclusive and do not change subscription
+ * health. HTTP, parsing, and failures isolated to one host remain actionable.
  */
 export const resolveSubscriptionFailures = async ({
   failures,
@@ -55,9 +54,14 @@ export const resolveSubscriptionFailures = async ({
     return clean;
   }
 
+  const networkFailures = failures.filter((failure) => failure.networkLevel);
+  const networkFailureHosts = new Set(
+    networkFailures.map((failure) => new URL(failure.subscription.rss_url).hostname),
+  );
   const outageSuspected = isRunOutageSuspected({
     totalSubscriptions,
-    failureCount: failures.length,
+    failureCount: networkFailures.length,
+    failureHostCount: networkFailureHosts.size,
   });
 
   const outagedHosts = findOutagedHosts({
@@ -65,14 +69,14 @@ export const resolveSubscriptionFailures = async ({
     failuresByHost: countByHost(failures.map((failure) => failure.subscription.rss_url)),
   });
 
-  let networkAvailable: boolean | undefined;
+  let suppressed = 0;
 
   for (const failure of failures) {
-    if (failure.networkLevel) {
-      networkAvailable ??= await isNetworkAvailable();
-      if (!networkAvailable) {
-        stats.networkSkipped += 1;
-      }
+    if (outageSuspected && failure.networkLevel) {
+      stats.networkSkipped += 1;
+      stats.errors.push(`${failure.subscription.url}: ${toFailureMessage(failure.error)}`);
+      suppressed += 1;
+      continue;
     }
 
     await handleSubscriptionFailure({
@@ -91,6 +95,6 @@ export const resolveSubscriptionFailures = async ({
     ...clean,
     outageSuspected,
     outagedHosts: [...outagedHosts].sort(),
-    suppressed: 0,
+    suppressed,
   };
 };

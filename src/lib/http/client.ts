@@ -9,6 +9,7 @@ import {
   resolveSafeHttpAddresses,
   type SafeResolvedAddress,
 } from "../url/network-policy.ts";
+import { type NetworkFailureKind, NetworkLevelError } from "./check-connectivity.ts";
 
 export const http = ofetch.create({
   timeout: 30_000,
@@ -23,6 +24,22 @@ export const http = ofetch.create({
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 const MAX_REDIRECTS = 5;
+
+const toConnectionFailureKind = (error: unknown): NetworkFailureKind => {
+  const code = error instanceof Error && "code" in error ? String(error.code) : "";
+  if (
+    code.startsWith("ERR_TLS_") ||
+    code.startsWith("CERT_") ||
+    code === "DEPTH_ZERO_SELF_SIGNED_CERT" ||
+    code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+  ) {
+    return "tls";
+  }
+  if (code === "ETIMEDOUT" || (error instanceof Error && error.message.startsWith("Timed out"))) {
+    return "timeout";
+  }
+  return "connect";
+};
 
 export type BoundedTextResponse = {
   status: number;
@@ -187,7 +204,12 @@ const requestPinned = async (
       lastError = error;
     }
   }
-  throw lastError ?? new Error("No validated address is available.");
+  const error = lastError ?? new Error("No validated address is available.");
+  throw new NetworkLevelError(
+    toConnectionFailureKind(error),
+    error instanceof Error ? error.message : "Failed to connect to the feed host.",
+    { cause: error },
+  );
 };
 
 const waitForRetryDelay = async (delayMs: number, signal: AbortSignal): Promise<void> => {
@@ -236,12 +258,25 @@ export const fetchBoundedText = async (
 
   try {
     while (true) {
-      const resolvedAddresses = await resolveSafeHttpAddresses(
-        currentUrl,
-        requestedUrl,
-        undefined,
-        controller.signal,
-      );
+      let resolvedAddresses: SafeResolvedAddress[] | null;
+      try {
+        resolvedAddresses = await resolveSafeHttpAddresses(
+          currentUrl,
+          requestedUrl,
+          undefined,
+          controller.signal,
+          true,
+        );
+      } catch (error) {
+        const timedOut = controller.signal.aborted;
+        throw new NetworkLevelError(
+          timedOut ? "timeout" : "dns",
+          timedOut
+            ? `Timed out resolving ${new URL(currentUrl).hostname}.`
+            : `DNS lookup failed for ${new URL(currentUrl).hostname}: ${error instanceof Error ? error.message : "unknown error"}`,
+          { cause: error },
+        );
+      }
       if (!resolvedAddresses) {
         throw new Error(`Unsafe URL blocked while fetching ${requestedUrl}.`);
       }
@@ -295,6 +330,16 @@ export const fetchBoundedText = async (
         body: await readBoundedBody(response, maxBytes),
       };
     }
+  } catch (error) {
+    if (error instanceof NetworkLevelError) {
+      throw error;
+    }
+    if (controller.signal.aborted) {
+      throw new NetworkLevelError("timeout", `Timed out fetching ${requestedUrl}.`, {
+        cause: error,
+      });
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }

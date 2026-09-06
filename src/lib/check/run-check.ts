@@ -101,6 +101,7 @@ const printFinalSummary = (
       network_skipped: stats.networkSkipped,
       outage_suspected: outage.outageSuspected,
       outaged_hosts: outage.outagedHosts,
+      suppressed: outage.suppressed,
     });
     return;
   }
@@ -122,8 +123,8 @@ const printFinalSummary = (
 
   if (outage.outageSuspected) {
     printStdout(
-      `Most subscriptions failed this run (${outage.total} checked). ` +
-        "Failures were recorded and milestone alerts remain queued for delivery.",
+      `Runner network outage suspected (${outage.suppressed} of ${outage.total} checks affected). ` +
+        "Subscription failure counters were left unchanged.",
     );
     return;
   }
@@ -131,7 +132,7 @@ const printFinalSummary = (
   if (outage.outagedHosts.length > 0) {
     printStdout(
       `Every subscription on ${outage.outagedHosts.join(", ")} failed this run ` +
-        "Failures were recorded and milestone alerts remain queued for delivery.",
+        "Failures were recorded and alerts remain enabled.",
     );
   }
 };

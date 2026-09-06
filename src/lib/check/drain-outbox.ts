@@ -7,7 +7,12 @@ import {
   markDeliveryDispatching,
   markDeliveryRetry,
 } from "../db/delivery-outbox.ts";
-import { type DeliverySource, parseDeliverySource } from "../notify/delivery-source.ts";
+import { getHealthState } from "../db/get-health-state.ts";
+import {
+  type DeliverySource,
+  getDeliveryFailureCount,
+  parseDeliverySource,
+} from "../notify/delivery-source.ts";
 import { sendNotification } from "../notify/send.ts";
 import type { CheckStats } from "./handle-items.ts";
 
@@ -58,6 +63,21 @@ export const drainDestinationOutbox = async ({
         title: delivery.link,
         archiveLink: null,
       };
+    }
+
+    const failureCount = getDeliveryFailureCount(source);
+    if (failureCount !== null) {
+      const health = getHealthState(db, source.channelName, source.subscriptionUrl);
+      if (health.consecutiveFailures < failureCount) {
+        if (!completeDeliverySuccess(db, delivery)) {
+          stats.errors.push(`${source.subscriptionUrl}: stale alert could not be removed`);
+          return;
+        }
+        if (isVerbose) {
+          printStderr(`[verbose] dropped recovered subscription alert: ${source.title}`);
+        }
+        continue;
+      }
     }
 
     try {

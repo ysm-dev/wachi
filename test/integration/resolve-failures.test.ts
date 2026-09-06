@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FetchError } from "ofetch";
 import type { CheckStats } from "../../src/lib/check/handle-items.ts";
 import type { PendingFailure } from "../../src/lib/check/process-subscription.ts";
 import { resolveSubscriptionFailures } from "../../src/lib/check/resolve-failures.ts";
@@ -11,7 +10,7 @@ import { resolveDestinationId } from "../../src/lib/db/delivery-ledger.ts";
 import { listDeliveryOutbox } from "../../src/lib/db/delivery-outbox.ts";
 import { getHealthState } from "../../src/lib/db/get-health-state.ts";
 import { beginHealthAttempt } from "../../src/lib/db/health-attempt.ts";
-import { resetNetworkAvailabilityStateForTest } from "../../src/lib/http/check-connectivity.ts";
+import { NetworkLevelError } from "../../src/lib/http/check-connectivity.ts";
 import { buildDestinationKey } from "../../src/lib/notify/destination-identity.ts";
 import { resetSendNotificationStateForTest } from "../../src/lib/notify/send.ts";
 
@@ -27,7 +26,6 @@ const makeStream = (text: string): ReadableStream<Uint8Array> => {
 };
 
 const originalSpawn = Bun.spawn;
-const originalFetch = globalThis.fetch;
 
 let tempDir = "";
 let connection: ConnectedDb | null = null;
@@ -63,8 +61,6 @@ beforeEach(async () => {
 
 afterEach(async () => {
   Bun.spawn = originalSpawn;
-  globalThis.fetch = originalFetch;
-  resetNetworkAvailabilityStateForTest();
   resetSendNotificationStateForTest();
   server?.stop();
   server = null;
@@ -102,7 +98,9 @@ const makeFailure = (
   index: number,
   { networkLevel = false, host }: { networkLevel?: boolean; host?: string } = {},
 ): PendingFailure => {
-  const error = networkLevel ? new FetchError("fetch failed") : new Error("HTTP 500");
+  const error = networkLevel
+    ? new NetworkLevelError("connect", "connect failed")
+    : new Error("HTTP 500");
   const effectiveChannelUrl = `discord://1234${index % 3}/token`;
   return {
     channelName: `channel-${index % 3}`,
@@ -146,37 +144,51 @@ const runResolve = async (
   });
 
 describe("resolveSubscriptionFailures / run-level outage detection", () => {
-  it("records counters and queues alerts even when most of the run fails", async () => {
+  it("leaves health unchanged when transport failures span the run", async () => {
     const db = requireDb();
     const stats = makeStats();
-    const failures = Array.from({ length: 6 }, (_, index) => makeFailure(index));
+    const failures = Array.from({ length: 6 }, (_, index) =>
+      makeFailure(index, { networkLevel: true }),
+    );
 
-    // Far more runs than the 10-failure alert milestone would need.
     for (let run = 0; run < 15; run++) {
       const result = await runResolve(failures, 6, stats);
       expect(result.outageSuspected).toBe(true);
-      expect(result.suppressed).toBe(0);
+      expect(result.suppressed).toBe(6);
       expect(result.total).toBe(6);
     }
 
     for (const failure of failures) {
       const health = getHealthState(db, failure.channelName, failure.subscription.url);
-      expect(health.consecutiveFailures).toBe(15);
+      expect(health.consecutiveFailures).toBe(0);
     }
-    expect(listDeliveryOutbox(db)).toHaveLength(6);
+    expect(listDeliveryOutbox(db)).toHaveLength(0);
 
     // Errors are still reported so the exit code and --json output stay truthful.
     expect(stats.errors).toHaveLength(6 * 15);
-    expect(stats.errors[0]).toContain("HTTP 500");
+    expect(stats.networkSkipped).toBe(6 * 15);
   });
 
-  it("counts confirmed network-level failures toward the ratio", async () => {
-    // A mixed outage: half clean fetch errors, half captive-portal style errors.
-    // If network-level failures were dropped before the ratio was computed, this
-    // run would land at 3/6 real failures and alert on them.
-    const probe = mock(() => Promise.resolve(new Response("ok")));
-    globalThis.fetch = probe as unknown as typeof fetch;
+  it("does not suppress HTTP failures even when the whole run fails", async () => {
+    const db = requireDb();
+    const stats = makeStats();
+    const failures = Array.from({ length: 6 }, (_, index) => makeFailure(index));
 
+    for (let run = 0; run < 10; run++) {
+      const result = await runResolve(failures, 6, stats);
+      expect(result.outageSuspected).toBe(false);
+      expect(result.suppressed).toBe(0);
+    }
+
+    for (const failure of failures) {
+      expect(
+        getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
+      ).toBe(10);
+    }
+    expect(listDeliveryOutbox(db)).toHaveLength(6);
+  });
+
+  it("suppresses transport failures but preserves server failures in a mixed run", async () => {
     const db = requireDb();
     const stats = makeStats();
     const failures = [
@@ -191,13 +203,21 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
     const result = await runResolve(failures, 6, stats);
 
     expect(result.outageSuspected).toBe(true);
+    expect(result.suppressed).toBe(3);
     expect(sentAppriseUrls).toHaveLength(0);
 
-    for (const failure of failures) {
+    for (const failure of failures.slice(0, 3)) {
+      expect(
+        getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
+      ).toBe(0);
+    }
+    for (const failure of failures.slice(3)) {
       expect(
         getHealthState(db, failure.channelName, failure.subscription.url).consecutiveFailures,
       ).toBe(1);
     }
+    expect(stats.networkSkipped).toBe(3);
+    expect(stats.errors).toHaveLength(6);
   });
 
   it("handles failures normally when only a minority fail", async () => {
@@ -236,11 +256,7 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
     }
   });
 
-  it("records confirmed network-down failures for eventual alerting", async () => {
-    globalThis.fetch = mock(() =>
-      Promise.reject(new TypeError("fetch failed")),
-    ) as unknown as typeof fetch;
-
+  it("records isolated network failures for eventual alerting", async () => {
     const db = requireDb();
     const stats = makeStats();
     const failures = [
@@ -251,7 +267,7 @@ describe("resolveSubscriptionFailures / run-level outage detection", () => {
     const result = await runResolve(failures, 10, stats);
 
     expect(result.outageSuspected).toBe(false);
-    expect(stats.networkSkipped).toBe(2);
+    expect(stats.networkSkipped).toBe(0);
     expect(stats.errors).toHaveLength(2);
     expect(sentAppriseUrls).toHaveLength(0);
     for (const failure of failures) {

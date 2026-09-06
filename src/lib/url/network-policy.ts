@@ -100,6 +100,7 @@ export const resolveSafeHttpAddresses = async (
   sourceUrl: string,
   lookupAddresses: LookupAddresses = (hostname) => lookup(hostname, { all: true, verbatim: true }),
   signal?: AbortSignal,
+  throwLookupErrors = false,
 ): Promise<SafeResolvedAddress[] | null> => {
   if (!isSafeDiscoveredHttpUrl(candidateUrl, sourceUrl)) {
     return null;
@@ -139,7 +140,10 @@ export const resolveSafeHttpAddresses = async (
       return family ? [{ address, family }] : [];
     });
     return resolved.length === addresses.length ? resolved : null;
-  } catch {
+  } catch (error) {
+    if (throwLookupErrors) {
+      throw error;
+    }
     return null;
   }
 };

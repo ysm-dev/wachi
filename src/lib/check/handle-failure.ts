@@ -56,10 +56,12 @@ const maybeQueueFailureAlert = (
     linkKey,
     payload: body,
     source: serializeDeliverySource({
+      kind: "subscription-failure",
       channelName,
       subscriptionUrl: subscription.url,
       title: `Subscription failure (${failures})`,
       archiveLink: null,
+      failureCount: failures,
     }),
     link: subscription.url,
   });

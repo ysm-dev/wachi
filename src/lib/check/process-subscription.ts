@@ -75,10 +75,8 @@ export const processSubscriptionCheck = async ({
       fetchItems,
     });
   } catch (error) {
-    // Every failure is collected, including confirmed network-level ones. Skipping
-    // them here would remove them from the run-wide failure ratio and let a mixed
-    // outage (some clean fetch errors, some captive-portal parse errors) slip under
-    // the threshold.
+    // Every failure is collected so transport failures can be correlated across
+    // hosts after the run, without hiding HTTP or parsing failures.
     failures.push({
       channelName,
       effectiveChannelUrl,
