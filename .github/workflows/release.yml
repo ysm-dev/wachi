@@ -42,8 +42,11 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Unit and integration tests
-        run: bun test test/unit test/integration
+      - name: Unit tests
+        run: bun test test/unit
+
+      - name: Integration tests
+        run: bun test test/integration
 
       - name: End-to-end tests
         run: bun test test/e2e
