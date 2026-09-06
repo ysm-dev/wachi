@@ -43,17 +43,17 @@ jobs:
         run: bun run typecheck
 
       - name: Unit tests
-        run: bun test test/unit
+        run: bun test --isolate test/unit
 
       - name: Integration tests
-        run: bun test test/integration
+        run: bun test --isolate test/integration
 
       - name: End-to-end tests
-        run: bun test test/e2e
+        run: bun test --isolate test/e2e
 
       - name: Coverage gate
         run: |
-          bun test --coverage 2>&1 | tee coverage.txt
+          bun test --isolate --coverage 2>&1 | tee coverage.txt
           LINE=$(grep "All files" coverage.txt)
           LINES_PERCENT=$(echo "$LINE" | awk -F'|' '{gsub(/ /, "", $3); print $3}')
           export LINES_PERCENT
