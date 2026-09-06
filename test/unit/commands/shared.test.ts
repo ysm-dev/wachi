@@ -18,7 +18,7 @@ const originalStderrWrite = process.stderr.write;
 beforeEach(() => {
   output.stdout = "";
   output.stderr = "";
-  process.exitCode = undefined;
+  process.exitCode = 0;
 
   process.stdout.write = ((chunk: unknown) => {
     output.stdout += String(chunk);
@@ -34,7 +34,7 @@ beforeEach(() => {
 afterEach(() => {
   process.stdout.write = originalStdoutWrite;
   process.stderr.write = originalStderrWrite;
-  process.exitCode = undefined;
+  process.exitCode = 0;
 });
 
 describe("command helpers", () => {

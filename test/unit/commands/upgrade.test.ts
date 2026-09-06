@@ -60,7 +60,7 @@ beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), "wachi-upgrade-"));
   output.stdout = "";
   output.stderr = "";
-  process.exitCode = undefined;
+  process.exitCode = 0;
   process.env.WACHI_PATHS_ROOT = tempDir;
   delete process.env.WACHI_WRAPPER_PATH;
 
@@ -81,7 +81,7 @@ afterEach(async () => {
   process.execPath = originalExecPath;
   Bun.spawn = originalSpawn;
   globalThis.fetch = originalFetch;
-  process.exitCode = undefined;
+  process.exitCode = 0;
   process.env.WACHI_WRAPPER_PATH = envSnapshot.WACHI_WRAPPER_PATH;
   process.env.WACHI_PATHS_ROOT = envSnapshot.WACHI_PATHS_ROOT;
   if (tempDir) {
