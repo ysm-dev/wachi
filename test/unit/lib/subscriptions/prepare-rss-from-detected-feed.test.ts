@@ -23,9 +23,7 @@ describe("prepareRssFromDetectedFeed", () => {
       url: "https://example.com/blog/",
       rss_url: "https://example.com/feed.xml",
     });
-    expect(prepared.baselineItems).toEqual([
-      { title: "Post", link: "https://example.com/post", publishedAt: null },
-    ]);
+    expect(prepared.baselineItems).toEqual([{ title: "Post", link: "https://example.com/post" }]);
   });
 
   it("falls back to RSS URL when feed channel link is missing", async () => {

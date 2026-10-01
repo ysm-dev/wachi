@@ -4,7 +4,6 @@ import type { SubscriptionConfig } from "../config/schema.ts";
 export const baselineItemSchema = z.object({
   title: z.string(),
   link: z.string(),
-  publishedAt: z.string().nullable(),
 });
 
 export type BaselineItem = z.infer<typeof baselineItemSchema>;

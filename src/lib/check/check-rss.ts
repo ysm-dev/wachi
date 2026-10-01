@@ -7,7 +7,6 @@ import {
   persistRssValidators,
 } from "../subscriptions/fetch-rss-subscription-items.ts";
 import { markDeliveryCutover } from "./delivery-cutover.ts";
-import { recordFeedContinuity, selectContinuousFeedItems } from "./feed-continuity.ts";
 import { type CheckStats, handleSubscriptionItems } from "./handle-items.ts";
 
 const checkRssOptionsSchema = z.object({
@@ -54,32 +53,8 @@ export const checkRssSubscription = async ({
     return;
   }
 
-  const selected = selectContinuousFeedItems({
-    db,
-    destinationId,
-    rssUrl: subscription.rss_url,
+  await handleSubscriptionItems({
     items: fetched.items,
-    cutoverComplete,
-  });
-
-  await handleSubscriptionItems({
-    items: selected.baselineItems,
-    channelName,
-    destinationId,
-    subscriptionUrl: subscription.url,
-    db,
-    dryRun,
-    baseline: true,
-    isJson,
-    isVerbose,
-    stats,
-    sourceIdentity: fetched.sourceIdentity,
-    linkTransforms,
-    appriseUrl: effectiveChannelUrl,
-  });
-
-  await handleSubscriptionItems({
-    items: selected.deliveryItems,
     channelName,
     destinationId,
     subscriptionUrl: subscription.url,
@@ -97,7 +72,6 @@ export const checkRssSubscription = async ({
   });
 
   if (!dryRun) {
-    recordFeedContinuity(db, destinationId, subscription.rss_url, fetched.items);
     persistRssValidators(db, subscription.rss_url, fetched.validators, validatorScope);
     if (!cutoverComplete) {
       markDeliveryCutover(db, destinationId, subscription.rss_url);

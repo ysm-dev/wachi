@@ -39,6 +39,19 @@ ${entries}
 </channel></rss>`;
 };
 
+const createAtomFeed = (items: FeedItem[]): string => {
+  const entries = items
+    .map(
+      (item) =>
+        `<entry><title>${item.title}</title><link href="${item.link}"/><id>${item.link}</id>${item.publishedAt ? `<updated>${item.publishedAt}</updated>` : ""}</entry>`,
+    )
+    .join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Test Feed</title>
+${entries}
+</feed>`;
+};
+
 const testDirs: string[] = [];
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
 
@@ -363,8 +376,11 @@ describe("delivery ledger cutover", () => {
     expect(notifications[2]).toContain("After Cutover");
   });
 
-  it("quarantines a historical feed replacement without enqueueing its 100 items", async () => {
-    const harness = await createHarness("wachi-e2e-feed-continuity-");
+  it.each([
+    "rss",
+    "atom",
+  ])("delivers unseen %s items regardless of dates or continuity", async (format) => {
+    const harness = await createHarness("wachi-e2e-feed-dates-");
     let feedItems: FeedItem[] = [
       {
         title: "Current",
@@ -380,7 +396,7 @@ describe("delivery ledger cutover", () => {
     const server = Bun.serve({
       port: 0,
       fetch() {
-        return new Response(createFeed(feedItems), {
+        return new Response((format === "atom" ? createAtomFeed : createFeed)(feedItems), {
           headers: { "content-type": "application/rss+xml" },
         });
       },
@@ -407,30 +423,61 @@ describe("delivery ledger cutover", () => {
       {
         title: "New",
         link: "https://example.com/new",
-        publishedAt: "Sun, 02 Aug 2026 00:00:00 GMT",
+        publishedAt: "Sat, 01 Aug 2026 00:00:00 GMT",
+      },
+      {
+        title: "Backdated",
+        link: "https://example.com/backdated",
+        publishedAt: "Wed, 01 Jan 2025 00:00:00 GMT",
+      },
+      {
+        title: "Undated",
+        link: "https://example.com/undated",
+      },
+      {
+        title: "Invalid Date",
+        link: "https://example.com/invalid-date",
+        publishedAt: "not-a-date",
       },
       ...feedItems,
     ];
+    const dryRun = await runCli(
+      ["check", "--dry-run", "--json", "--config", harness.configPath],
+      harness.env,
+    );
+    expect(dryRun.exitCode).toBe(0);
+    expect(JSON.parse(dryRun.stdout).data.sent.map((item: FeedItem) => item.title)).toEqual([
+      "Invalid Date",
+      "Undated",
+      "Backdated",
+      "New",
+    ]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(2);
+
     const normal = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
     expect(normal.exitCode).toBe(0);
-    expect(JSON.parse(normal.stdout).data.sent).toHaveLength(1);
-    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(3);
+    expect(JSON.parse(normal.stdout).data.sent).toEqual(JSON.parse(dryRun.stdout).data.sent);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(6);
 
-    feedItems = Array.from({ length: 100 }, (_, index) => ({
+    const repeated = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    expect(repeated.exitCode).toBe(0);
+    expect(JSON.parse(repeated.stdout).data.sent).toEqual([]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(6);
+
+    feedItems = Array.from({ length: 3 }, (_, index) => ({
       title: `Historical ${index}`,
       link: `https://example.com/historical-${index}`,
       publishedAt: new Date(Date.UTC(2025, 0, index + 1)).toUTCString(),
     }));
-    const anomalous = await runCli(
-      ["check", "--json", "--config", harness.configPath],
-      harness.env,
-    );
-    const anomalousPayload = JSON.parse(anomalous.stdout);
-    expect(anomalous.exitCode).toBe(1);
-    expect(anomalousPayload.data.sent).toEqual([]);
-    expect(anomalousPayload.data.errors).toHaveLength(1);
-    expect(anomalousPayload.data.errors[0]).toContain("Feed continuity lost");
-    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(3);
+    const rotated = await runCli(["check", "--json", "--config", harness.configPath], harness.env);
+    expect(rotated.exitCode).toBe(0);
+    expect(JSON.parse(rotated.stdout).data.sent.map((item: FeedItem) => item.title)).toEqual([
+      "Historical 2",
+      "Historical 1",
+      "Historical 0",
+    ]);
+    expect(JSON.parse(rotated.stdout).data.errors).toEqual([]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(9);
 
     feedItems = [
       {
@@ -456,7 +503,7 @@ describe("delivery ledger cutover", () => {
         channel_name: "main",
       },
     ]);
-    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(4);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(10);
   });
 
   it("does not add or send an alias resolving to an already prepared RSS URL", async () => {

@@ -4,7 +4,6 @@ import { z } from "zod";
 const parsedFeedItemSchema = z.object({
   title: z.string().min(1),
   link: z.string().min(1),
-  publishedAt: z.string().nullable(),
 });
 
 export type ParsedFeedItem = z.infer<typeof parsedFeedItemSchema>;
@@ -108,46 +107,6 @@ const resolveOptionalUrl = (value: string | null, baseUrl: string): string | nul
   }
 };
 
-const parseDate = (value: string | undefined): string | null => {
-  if (!value) {
-    return null;
-  }
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return null;
-  }
-  return new Date(timestamp).toISOString();
-};
-
-const toDeliveryOrder = (items: ParsedFeedItem[]): ParsedFeedItem[] => {
-  const timestamped: Array<{ item: ParsedFeedItem; index: number; timestamp: number }> = [];
-  const undated: Array<{ item: ParsedFeedItem; index: number }> = [];
-
-  items.forEach((item, index) => {
-    if (item.publishedAt) {
-      timestamped.push({ item, index, timestamp: Date.parse(item.publishedAt) });
-    } else {
-      undated.push({ item, index });
-    }
-  });
-
-  timestamped.sort((left, right) => left.timestamp - right.timestamp || right.index - left.index);
-  undated.reverse();
-  return [...timestamped.map(({ item }) => item), ...undated.map(({ item }) => item)];
-};
-
-const sanitizeInvalidDates = (xml: string): string => {
-  return xml.replace(
-    /<(updated|published|pubDate|dc:date)>([^<]*)<\/\1>/gi,
-    (match, tag: string, rawValue: string) => {
-      const value = rawValue.trim();
-      return !value || value.toLowerCase() === "null" || Number.isNaN(Date.parse(value))
-        ? `<${tag}></${tag}>`
-        : match;
-    },
-  );
-};
-
 const isUrlLikeGuid = (value: string | undefined): value is string => {
   if (!value) {
     return false;
@@ -157,11 +116,19 @@ const isUrlLikeGuid = (value: string | undefined): value is string => {
 
 export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promise<ParsedFeed> => {
   const parser = new Parser({
+    xml2js: {
+      // rss-parser converts Atom dates internally and throws on invalid values.
+      // Ignore date values before conversion, including those inside CDATA.
+      valueProcessors: [
+        (value: string, name: string) =>
+          /^(updated|published|pubDate|dc:date)$/.test(name) ? "" : value,
+      ],
+    },
     customFields: {
       feed: ["logo", "icon"],
     },
   });
-  const feed = await parser.parseString(sanitizeInvalidDates(xml));
+  const feed = await parser.parseString(xml);
 
   const feedRecord = asRecord(feed);
   const rawItems = Array.isArray(feedRecord?.items) ? feedRecord.items : [];
@@ -178,9 +145,6 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
       const candidate = parsedFeedItemSchema.safeParse({
         title: asCleanString(item.title) ?? snippet?.slice(0, 100) ?? "Untitled",
         link,
-        publishedAt: parseDate(
-          asCleanString(item.isoDate) ?? asCleanString(item.pubDate) ?? undefined,
-        ),
       });
 
       if (!candidate.success || !resolveOptionalUrl(candidate.data.link, subscriptionUrl)) {
@@ -196,7 +160,7 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
     title: asCleanString((feed as { title?: unknown }).title),
     siteUrl: resolveOptionalUrl(extractFeedSiteUrl(feed), subscriptionUrl),
     imageUrl: extractFeedImageUrl(feed),
-    items: toDeliveryOrder(items),
+    items: items.reverse(),
   };
 };
 

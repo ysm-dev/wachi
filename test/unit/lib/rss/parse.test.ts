@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe("parseRssItems", () => {
-  it("orders dated feed items oldest-first", async () => {
+  it("reverses source order for dated feed items", async () => {
     const xml = await readFile(fixturePath("rss", "basic.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
@@ -47,17 +47,16 @@ describe("parseRssItems", () => {
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
     expect(items.map((item) => item.title)).toEqual(["Oldest", "Older", "Newest"]);
-    expect(items.every((item) => item.publishedAt === null)).toBe(true);
   });
 
   it("uses descriptions for missing titles and URL-like GUIDs for missing links", async () => {
     const xml = await readFile(fixturePath("rss", "fallback.xml"), "utf8");
     const items = await parseRssItems(xml, "https://example.com/subscription");
 
-    expect(items[0]?.link).toBe("https://example.com/guid-only");
-    expect(items[0]?.title.startsWith("This item has no title field")).toBe(true);
-    expect(items[1]?.link).toBe("https://example.com/title-without-link");
-    expect(items[1]?.title).toBe("Title Without Link");
+    expect(items[1]?.link).toBe("https://example.com/guid-only");
+    expect(items[1]?.title.startsWith("This item has no title field")).toBe(true);
+    expect(items[0]?.link).toBe("https://example.com/title-without-link");
+    expect(items[0]?.title).toBe("Title Without Link");
   });
 
   it("skips items with missing links and opaque GUIDs", async () => {
@@ -79,7 +78,7 @@ describe("parseRssItems", () => {
     expect(items).toEqual([]);
   });
 
-  it("sorts timestamps instead of assuming source order", async () => {
+  it("uses reverse source order regardless of timestamps", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0"><channel><title>Unsorted</title>
   <item><title>Middle</title><link>https://example.com/middle</link><pubDate>Tue, 02 Jan 2024 00:00:00 GMT</pubDate></item>
@@ -89,7 +88,7 @@ describe("parseRssItems", () => {
 
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
-    expect(items.map((item) => item.title)).toEqual(["Oldest", "Middle", "Newest"]);
+    expect(items.map((item) => item.title)).toEqual(["Newest", "Oldest", "Middle"]);
   });
 
   it("skips one malformed parser item without dropping valid items", async () => {
@@ -109,7 +108,6 @@ describe("parseRssItems", () => {
       {
         title: "Valid",
         link: "https://example.com/valid",
-        publishedAt: "2024-01-01T00:00:00.000Z",
       },
     ]);
   });
@@ -154,7 +152,7 @@ describe("parseRssItems", () => {
     expect(items).toEqual([]);
   });
 
-  it("sets publishedAt to null when feed item has no date", async () => {
+  it("keeps feed items without dates", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
@@ -169,10 +167,10 @@ describe("parseRssItems", () => {
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
     expect(items).toHaveLength(1);
-    expect(items[0]?.publishedAt).toBeNull();
+    expect(items[0]).toEqual({ title: "No Date", link: "https://example.com/no-date" });
   });
 
-  it("sets publishedAt to null when feed date is invalid", async () => {
+  it("keeps feed items with invalid dates", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
@@ -188,10 +186,10 @@ describe("parseRssItems", () => {
     const items = await parseRssItems(xml, "https://example.com/feed.xml");
 
     expect(items).toHaveLength(1);
-    expect(items[0]?.publishedAt).toBeNull();
+    expect(items[0]).toEqual({ title: "Bad Date", link: "https://example.com/bad-date" });
   });
 
-  it("keeps Atom entries when an updated date is invalid", async () => {
+  it.each(["updated", "published"])("keeps Atom entries with invalid %s dates", async (tag) => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Invalid Atom Date</title>
@@ -199,7 +197,7 @@ describe("parseRssItems", () => {
     <title>Still Deliver This</title>
     <link href="https://example.com/atom-item" />
     <id>https://example.com/atom-item</id>
-    <updated>not-a-date</updated>
+    <${tag}>not-a-date</${tag}>
   </entry>
 </feed>`;
 
@@ -209,8 +207,30 @@ describe("parseRssItems", () => {
       {
         title: "Still Deliver This",
         link: "https://example.com/atom-item",
-        publishedAt: null,
       },
+    ]);
+  });
+
+  it("ignores empty and CDATA dates without altering entry content", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Mixed Dates</title>
+  <entry>
+    <title><![CDATA[Keep <updated>this text</updated>]]></title>
+    <link href="https://example.com/empty-date" />
+    <updated />
+  </entry>
+  <entry>
+    <title>CDATA Date</title>
+    <link href="https://example.com/cdata-date" />
+    <published><![CDATA[not-a-date]]></published>
+    <updated type="text">also-invalid</updated>
+  </entry>
+</feed>`;
+
+    expect(await parseRssItems(xml, "https://example.com/feed.xml")).toEqual([
+      { title: "CDATA Date", link: "https://example.com/cdata-date" },
+      { title: "Keep <updated>this text</updated>", link: "https://example.com/empty-date" },
     ]);
   });
 

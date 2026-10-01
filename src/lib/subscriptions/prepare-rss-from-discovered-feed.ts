@@ -17,7 +17,6 @@ export const prepareRssFromDiscoveredFeed = async (
     baselineItems: fetched.items.map((item) => ({
       title: item.title,
       link: item.link,
-      publishedAt: item.publishedAt,
     })),
     warning: undefined,
   };

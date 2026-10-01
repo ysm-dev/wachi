@@ -149,9 +149,7 @@ describe("RSS detect/discover", () => {
       url: `${origin}/nested/page`,
       rss_url: `${origin}/actual/feed.xml`,
     });
-    expect(prepared.baselineItems).toEqual([
-      { title: "One", link: `${origin}/actual/items/one`, publishedAt: null },
-    ]);
+    expect(prepared.baselineItems).toEqual([{ title: "One", link: `${origin}/actual/items/one` }]);
   });
 
   it("prepares a direct RSS feed", async () => {
