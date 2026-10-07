@@ -45,7 +45,7 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 2. For each subscription (concurrent via p-limit, rate-limited per domain):
    (if --name is set, only subscriptions for that channel are checked)
      |
-     Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Extract items
+     Fetch RSS (with ETag/If-Modified-Since) --> Parse with rss-parser --> Take first 20 entries
      |
      For each item:
        Resolve relative URLs against RSS URL and conservatively canonicalize
@@ -60,13 +60,13 @@ wachi sub -n <name> [-a <apprise-url>] <url>
 
 The permanent uniqueness constraint is `(physical destination, SHA-256(canonical original link))`. Titles, channel names, subscription URLs, publication dates, and transformed notification links are metadata, not identity. Duplicate feed records, title changes, channel renames, and overlapping subscriptions cannot admit a second delivery to the same destination.
 
-RSS and Atom publication dates are ignored. Every fetched item is checked against the delivery ledger, regardless of its date or overlap with earlier feed contents. Items are processed in reverse feed order, assuming newest-first source order.
+RSS and Atom publication dates are ignored. Only the first 20 entries per feed in source order are considered, before validation or deduplication. Valid items within this window are checked against the delivery ledger regardless of their dates or overlap with earlier feed contents. The selected items are processed in reverse feed order, assuming newest-first source order. Entries outside the window are ignored on every check, even if their URLs change.
 
 **Item-link canonicalization is deliberately conservative.** Scheme, `www.` prefix, trailing slash, path case, query order, and query case are all preserved, because normalizing any of them can merge two genuinely different items. The **URL fragment is preserved for item links**: anchor-addressed feeds (per-comment permalinks such as `/topic?id=1#cid2`, hash-routed sites) use the fragment as the only discriminator between items, so discarding it collapses many items onto one permanent key and silently suppresses every item after the first, forever. A bare trailing `#` carries no fragment and is dropped so `…/post#` and `…/post` keep one identity.
 
 Subscription (feed) URLs use a separate canonicalization that *does* strip the fragment, since a fragment is never sent to the server and cannot change which document is fetched.
 
-On first subscribe, current items after the first feed entry are inserted as permanent baseline keys and the first entry is admitted through the normal outbox. Use `--send-existing` / `-e` to admit all current items on the next check instead.
+On first subscribe, within the first 20 feed entries, older items are inserted as permanent baseline keys and the latest valid entry is admitted through the normal outbox. Use `--send-existing` / `-e` to admit the current top 20 items on the next check instead.
 
 **Same URL, multiple destinations:** Allowed once per distinct physical destination. Multiple logical channels targeting the same destination share delivery history.
 
@@ -109,7 +109,7 @@ Running `wachi` with no subcommand shows help (same as `wachi --help`).
 ```
 wachi sub -n <name> <url>         # Subscribe a URL to a notification channel name
   --apprise-url, -a <apprise-url> # Required when creating a new channel name
-  --send-existing, -e             # Skip baseline, send all current items on next check
+  --send-existing, -e             # Skip baseline, send current top 20 items on next check
   --help, -h
 
 wachi unsub -n <name> <url>       # Unsubscribe a URL from a channel
@@ -182,7 +182,7 @@ Command-specific `data` shapes:
 # Subscribe to a blog via its URL (auto-discovers RSS)
 wachi sub -n main -a "slack://xoxb-token/channel" "https://blog.example.com"
 
-# Subscribe and send all existing items on next check
+# Subscribe and send current top 20 items on next check
 wachi sub -n alerts -a "discord://webhook-id/token" -e "https://news.ycombinator.com"
 
 # Subscribe without https:// (auto-prepended)
@@ -418,14 +418,14 @@ On subsequent fetches, send `If-None-Match` and `If-Modified-Since` headers. If 
 
 - Fetch the RSS feed via ofetch (with ETag/If-Modified-Since)
 - If 304 Not Modified: skip (no changes)
-- Parse with rss-parser
+- Parse with rss-parser and select only the first 20 entries before validation or deduplication
 - For each item in reverse feed order: canonicalize the link and atomically admit a permanent key plus outbox payload
 - After all feed admissions commit, drain durable outbox rows
 
 ### 3. Baseline Behavior
 
 When `wachi sub` is called (default, no `--send-existing`):
-1. Immediately fetch the current RSS items
+1. Immediately fetch the first 20 RSS entries
 2. Insert older items as permanent baseline keys
 3. Admit and send the latest link through the normal outbox, if that destination has not seen it
 4. Next `wachi check` will only admit genuinely new links
@@ -433,7 +433,7 @@ When `wachi sub` is called (default, no `--send-existing`):
 When `wachi sub --send-existing` / `-e` is called:
 1. Add subscription to config
 2. Mark the subscription cutover without inserting baseline keys
-3. Next `wachi check` will admit and send all current links through the outbox
+3. Next `wachi check` will admit and send unseen links within the first 20 feed entries through the outbox
 
 ### 4. URL Reachability Validation
 
@@ -486,7 +486,7 @@ No `-t` (title) flag is used. The entire notification is sent as the body. Some 
 
 - Notifications to the **same physical destination** are sent **sequentially**
 - Notifications to **different destinations** are sent **in parallel**
-- Within a single RSS/Atom feed, items are sent **oldest first** by reversing the feed's source order (feeds usually publish newest first)
+- Within a single RSS/Atom feed, the selected first 20 entries are sent **oldest first** by reversing their source order (feeds usually publish newest first)
 - Ordering across different feeds in the same channel is **not guaranteed**
 
 ### Partial Notification Failure

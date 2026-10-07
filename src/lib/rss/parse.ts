@@ -1,6 +1,8 @@
 import Parser from "rss-parser";
 import { z } from "zod";
 
+const MAX_FEED_ITEMS = 20;
+
 const parsedFeedItemSchema = z.object({
   title: z.string().min(1),
   link: z.string().min(1),
@@ -132,7 +134,9 @@ export const parseRssFeed = async (xml: string, subscriptionUrl: string): Promis
 
   const feedRecord = asRecord(feed);
   const rawItems = Array.isArray(feedRecord?.items) ? feedRecord.items : [];
-  const items = rawItems.flatMap((rawItem): ParsedFeedItem[] => {
+  // Limit the source window before filtering or reversing so URL migrations
+  // cannot enqueue an entire archive, even across repeated checks.
+  const items = rawItems.slice(0, MAX_FEED_ITEMS).flatMap((rawItem): ParsedFeedItem[] => {
     try {
       const item = asRecord(rawItem);
       if (!item) {

@@ -59,6 +59,20 @@ describe("parseRssItems", () => {
     expect(items[0]?.title).toBe("Title Without Link");
   });
 
+  it("does not fill invalid entries in the top 20 with items outside that window", async () => {
+    const entries = Array.from({ length: 21 }, (_, index) => {
+      const link = index === 0 ? "" : `<link>https://example.com/post-${index}</link>`;
+      return `<item><title>Post ${index}</title>${link}</item>`;
+    }).join("\n");
+    const xml = `<rss version="2.0"><channel><title>Archive</title>${entries}</channel></rss>`;
+
+    const items = await parseRssItems(xml, "https://example.com/feed.xml");
+
+    expect(items.map((item) => item.link)).toEqual(
+      Array.from({ length: 19 }, (_, index) => `https://example.com/post-${19 - index}`),
+    );
+  });
+
   it("skips items with missing links and opaque GUIDs", async () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">

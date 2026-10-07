@@ -506,6 +506,68 @@ describe("delivery ledger cutover", () => {
     expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(10);
   });
 
+  it("checks only the top 20 items per feed after a bulk URL migration", async () => {
+    const harness = await createHarness("wachi-e2e-feed-window-");
+    let articlePath = "blog";
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const format = new URL(request.url).pathname === "/atom.xml" ? "atom" : "rss";
+        const items = Array.from({ length: 400 }, (_, index) => ({
+          title: `Post ${400 - index}`,
+          link: `https://example.com/${articlePath}/${format}/post-${400 - index}`,
+        }));
+        return new Response((format === "atom" ? createAtomFeed : createFeed)(items), {
+          headers: { "content-type": "application/xml" },
+        });
+      },
+    });
+    servers.push(server);
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    await writeFile(
+      harness.configPath,
+      `channels:
+  - name: "main"
+    apprise_url: "slack://token/channel"
+    subscriptions:
+      - url: "${baseUrl}/rss.xml"
+        rss_url: "${baseUrl}/rss.xml"
+      - url: "${baseUrl}/atom.xml"
+        rss_url: "${baseUrl}/atom.xml"
+`,
+      "utf8",
+    );
+    const args = ["check", "--json", "--config", harness.configPath];
+
+    for (const path of ["blog", "resources/articles"]) {
+      articlePath = path;
+      const preview = await runCli([...args, "--dry-run"], harness.env);
+      expect(preview.exitCode).toBe(0);
+      expect(JSON.parse(preview.stdout).data.sent).toHaveLength(40);
+
+      const result = await runCli(args, harness.env);
+      expect(result.exitCode).toBe(0);
+      const sent: FeedItem[] = JSON.parse(result.stdout).data.sent;
+      expect(sent).toHaveLength(40);
+      for (const format of ["rss", "atom"]) {
+        expect(
+          sent.filter((item) => item.link.includes(`/${format}/`)).map((item) => item.link),
+        ).toEqual(
+          Array.from(
+            { length: 20 },
+            (_, index) => `https://example.com/${path}/${format}/post-${381 + index}`,
+          ),
+        );
+      }
+    }
+
+    // Rechecking the same archive must not work through the next 20 unseen items.
+    const repeated = await runCli(args, harness.env);
+    expect(repeated.exitCode).toBe(0);
+    expect(JSON.parse(repeated.stdout).data.sent).toEqual([]);
+    expect(await readNotificationBodies(harness.appriseLogPath)).toHaveLength(80);
+  });
+
   it("does not add or send an alias resolving to an already prepared RSS URL", async () => {
     const harness = await createHarness("wachi-e2e-rss-alias-");
     const server = Bun.serve({

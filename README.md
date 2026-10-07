@@ -59,14 +59,14 @@ wachi sub -n <name> [-a <apprise-url>] <url>
   (link tags, common paths)
 ```
 
-On `wachi check`, item links are canonicalized and atomically admitted to a permanent per-destination delivery ledger. New links enter a durable outbox and are sent via apprise; a link already accepted for that physical destination is always skipped, even if its title, subscription, or channel name changes.
+On `wachi check`, only the first 20 entries of each RSS/Atom feed, in source order, are considered. This window is applied before validation and deduplication, then reversed for oldest-first delivery. Item links are canonicalized and atomically admitted to a permanent per-destination delivery ledger. New links enter a durable outbox and are sent via apprise; a link already accepted for that physical destination is always skipped, even if its title, subscription, or channel name changes.
 
 ## Commands
 
 ```
 wachi sub -n <name> <url>         Subscribe a URL to a named channel
   -a, --apprise-url <url>         Required when creating a new channel
-  -e, --send-existing             Send all current items on next check (skip baseline)
+  -e, --send-existing             Send current top 20 items on next check (skip baseline)
 
 wachi unsub -n <name> [url]       Unsubscribe a URL or remove entire channel
 
@@ -111,7 +111,7 @@ wachi sub -n media -a "tgram://bot-token/chat-id" "https://youtube.com/@channel"
 # URL without https:// (auto-prepended)
 wachi sub -n main "blog.example.com"
 
-# Send all existing items on next check (no baseline)
+# Send current top 20 items on next check (no baseline)
 wachi sub -n alerts -e "https://github.com/ysm-dev/wachi/releases.atom"
 
 # Dry-run: see what would be sent
@@ -190,7 +190,7 @@ For `x.com` / `twitter.com` items, `wachi` archives the transformed notification
 - **Permanent link identity** -- compact binary keys track each canonical link once per physical destination and are never expired
 - **Durable outbox** -- items are admitted transactionally before delivery, so feed changes and process restarts cannot lose queued work
 - **Conservative retries** -- pre-dispatch failures retry; ambiguous post-dispatch failures are retained as uncertain to prevent duplicates
-- **Baseline seeding** -- older current items are seeded and the latest item is sent once; `--send-existing` defers every current item to the next check
+- **Baseline seeding** -- within the first 20 feed entries, older items are seeded and the latest item is sent once; `--send-existing` defers those items to the next check
 - **SQLite WAL mode** -- composite constraints and delivery leases coordinate concurrent checks
 - **No interactive prompts** -- ever. Errors tell you exactly what to set and where (What / Why / Fix pattern)
 - **Atomic config writes** -- write to temp, then rename. No corruption from concurrent access

@@ -78,7 +78,7 @@ export const subCommand = defineCommand({
     "send-existing": {
       type: "boolean",
       alias: "e",
-      description: "Skip baseline and send all current items on next check",
+      description: "Skip baseline and send the current top 20 items on next check",
       default: false,
     },
     url: {
