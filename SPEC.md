@@ -532,6 +532,11 @@ export const http = ofetch.create({
 - **User-Agent:** `wachi/<version>`
 - **Redirects:** Followed transparently by ofetch
 
+Feed fetches use a separate bounded client that connects to each validated DNS address directly:
+
+- **Budget:** 15 seconds per feed, covering DNS, redirects, one retry on 408/429/5xx, and the response body
+- **Address failover:** Addresses are tried in DNS order. Each attempt gets an equal share of the budget to open its TCP connection. Once connected, only the feed budget applies, so an address that fails instantly (such as IPv6 on an IPv4-only network) does not shorten the time a slow server has to respond
+
 ## Concurrency & Rate Limiting
 
 When `wachi check` runs:

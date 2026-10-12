@@ -13,7 +13,7 @@ import { loadWebsiteBranding } from "./load-website-branding.ts";
 import { fallbackWebsiteTitle, googleS2FaviconUrl } from "./source-branding.ts";
 import { subscriptionItemSchema } from "./subscription-item.ts";
 
-const RSS_FETCH_TIMEOUT_MS = 5_000;
+const RSS_FETCH_TIMEOUT_MS = 15_000;
 const RSS_FETCH_RETRY_COUNT = 1;
 const RSS_FETCH_RETRY_DELAY_MS = 250;
 const RSS_FETCH_MAX_BYTES = 5 * 1024 * 1024;

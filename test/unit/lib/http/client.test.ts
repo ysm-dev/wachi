@@ -123,6 +123,28 @@ describe("fetchBoundedText", () => {
     ).rejects.toBeInstanceOf(Error);
   });
 
+  it("gives a slow response the full budget when another address fails fast", async () => {
+    // localhost resolves to ::1 and 127.0.0.1. Binding only 127.0.0.1 makes the
+    // ::1 attempt fail instantly, like IPv6 on an IPv4-only network.
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch() {
+        await Bun.sleep(700);
+        return new Response("ok");
+      },
+    });
+    servers.push(server);
+
+    const response = await fetchBoundedText(`http://localhost:${server.port}`, {
+      timeoutMs: 1_000,
+      maxBytes: 32,
+      retry: 0,
+    });
+
+    expect(response.body).toBe("ok");
+  });
+
   it("classifies connection failures as network-level errors", async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const port = server.port ?? 0;

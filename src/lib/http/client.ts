@@ -177,6 +177,11 @@ const requestPinnedAddress = async (
     connectionTimeout = setTimeout(() => {
       request.destroy(new Error(`Timed out connecting to ${address.address}.`));
     }, connectionTimeoutMs);
+    // The per-address timer only covers connecting, so an unreachable address
+    // fails over quickly. The caller's budget bounds TLS and the response.
+    request.once("socket", (socket) => {
+      socket.once("connect", clearConnectionTimeout);
+    });
     request.once("error", (error) => {
       clearConnectionTimeout();
       reject(error);
